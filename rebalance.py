@@ -15,7 +15,6 @@ SessionStart, PreCompact) but can also be run manually.
 
 import argparse
 import json
-import math
 import os
 import platform
 import re
@@ -67,45 +66,6 @@ STOP_WORDS = frozenset(
     "out set should that them then they too very will".split()
 )
 
-# Capitalized words to exclude from key-term extraction.
-GLOSSARY_STOP_TERMS = frozenset([
-    # Days and months (capitalized but not project-relevant).
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
-    "Saturday", "Sunday", "January", "February", "March", "April",
-    "May", "June", "July", "August", "September", "October",
-    "November", "December",
-    # Common section headings and markdown terms.
-    "Summary", "Overview", "Context", "Details", "Notes", "Status",
-    "Description", "Example", "Important", "Usage", "References",
-    "Index", "Memory", "True", "False", "None", "User",
-    # Common sentence-start words (capitalized only by position).
-    "The", "This", "That", "These", "Those", "There", "Here",
-    "Where", "Which", "What", "When", "How", "Why", "Who",
-    "Each", "Every", "Some", "Any", "All", "Most", "Other",
-    "After", "Before", "During", "Since", "Until",
-    "Also", "Always", "Never", "Only", "Just", "Still",
-    # Collapsed contractions (after apostrophe removal).
-    "Dont", "Doesnt", "Didnt", "Isnt", "Wasnt", "Arent", "Wont",
-    "Cant", "Couldnt", "Shouldnt", "Wouldnt", "Hasnt", "Havent",
-    "Its", "Thats", "Theres", "Heres", "Whats", "Whos",
-    "Youre", "Theyre", "Were", "Hes", "Shes", "Ive", "Youve",
-    "Theyve", "Weve", "Ill", "Youll", "Theyll", "Well",
-    "Run", "Use", "Add", "Set", "Get", "Try", "See", "Let",
-    "Keep", "Make", "Take", "Give", "Show", "Find", "Check",
-    "Save", "Read", "Write", "File", "Test", "Code", "Plan",
-    "NOT", "AND", "BUT", "FOR", "MAX", "MIN",
-    # Words often capitalized in technical writing but not key terms.
-    "Issue", "Issues", "Bug", "Bugs", "Feature", "Update",
-    "Instead", "However", "Although", "Because", "Therefore",
-    "Minimal", "Default", "Optional", "Required", "Recommended",
-    "Can", "Will", "Could", "Would", "Should", "Might",
-    "New", "Old", "First", "Last", "Next", "Previous",
-    "Squash", "Merge", "Push", "Pull", "Commit", "Branch",
-    # Common coding terms that are often capitalized.
-    "TODO", "FIXME", "NOTE", "WARN", "WARNING", "ERROR", "FAIL",
-    "OK", "HTML", "CSS", "JSON", "API", "URL", "HTTP", "HTTPS",
-    "CLI", "SSH", "DNS", "SQL", "PDF", "MIT", "URLs",
-])
 
 
 # ── Configuration ──────────────────────────────────────────────────────
@@ -410,22 +370,27 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
               max_bytes=DEFAULT_MAX_BYTES, dry_run=False):
     """Rebalance the memory tree rooted at MEMORY.md.
 
-    Returns (actions, warnings) where:
+    Returns (actions, warnings, messages) where:
         actions:  list of action descriptions (for logging / dry-run)
         warnings: list of unresolvable issues (max depth, too few to split)
+        messages: list of systemMessage strings for Claude (e.g. glossary update)
     """
     actions = []
     warnings = []
+    messages = []
     memory_md = os.path.join(memory_dir, "MEMORY.md")
 
     if not os.path.exists(memory_md):
-        return ["MEMORY.md not found — nothing to do."], []
+        return ["MEMORY.md not found — nothing to do."], [], []
 
     header, entries = parse_index(memory_md)
 
     # Update glossary (always runs, even when tree is within limits).
-    glossary_actions, glossary_entry = update_glossary(memory_dir, dry_run)
+    glossary_actions, glossary_entry, glossary_messages = update_glossary(
+        memory_dir, dry_run
+    )
     actions.extend(glossary_actions)
+    messages.extend(glossary_messages)
     if glossary_entry:
         has_glossary = any(e["path"] == GLOSSARY_FILE for e in entries)
         if not has_glossary:
@@ -444,9 +409,23 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
 
     total_lines = len(header) + len(entries) + 1  # +1 for trailing newline
     total_bytes = file_size_bytes(memory_md)
-    needs_rebalance = exceeds_limits(
-        memory_md, header, entries, max_lines, max_bytes
-    )
+
+    # Young trees (no _index/ yet) rebalance at 50% of normal threshold
+    # to build structure early, before the first compaction wipes context.
+    index_dir = os.path.join(memory_dir, INDEX_DIR)
+    is_young = not os.path.isdir(index_dir)
+    if is_young:
+        early_lines = max(max_lines // 2, 10)
+        early_bytes = max(max_bytes // 2, 5120) if max_bytes else 0
+        needs_rebalance = exceeds_limits(
+            memory_md, header, entries, early_lines, early_bytes
+        )
+        if needs_rebalance:
+            actions.append("Young tree — triggering early rebalance.")
+    else:
+        needs_rebalance = exceeds_limits(
+            memory_md, header, entries, max_lines, max_bytes
+        )
 
     if not needs_rebalance:
         size_info = f"{total_lines} lines, {total_bytes} bytes"
@@ -465,7 +444,7 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                     )
                     actions.extend(sub_actions)
                     warnings.extend(sub_warns)
-        return actions, warnings
+        return actions, warnings, messages
 
     size_info = f"{total_lines} lines, {total_bytes} bytes"
     actions.append(
@@ -554,7 +533,7 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                 actions.extend(sub_actions)
                 warnings.extend(sub_warns)
 
-    return actions, warnings
+    return actions, warnings, messages
 
 
 def extract_keywords(text):
@@ -574,187 +553,77 @@ def collect_memory_files(memory_dir):
     return files
 
 
-def extract_terms_from_text(text):
-    """Extract candidate key terms from text.
+def glossary_is_stale(memory_dir):
+    """Check if glossary.md is missing or older than any memory file."""
+    glossary_path = os.path.join(memory_dir, GLOSSARY_FILE)
+    if not os.path.exists(glossary_path):
+        return True
+    try:
+        glossary_mtime = os.path.getmtime(glossary_path)
+    except OSError:
+        return True
+    for filepath in collect_memory_files(memory_dir):
+        try:
+            if os.path.getmtime(filepath) > glossary_mtime:
+                return True
+        except OSError:
+            continue
+    return False
 
-    Returns a list of capitalized phrases (proper nouns, named concepts).
-    Treats apostrophe+letter as part of a word (contractions stay whole).
-    """
-    # Collapse contractions into single tokens so "Don't" doesn't
-    # produce "Don". Replace apostrophe+letter with the letter joined.
-    cleaned = re.sub(r"'([a-zA-Z])", r"\1", text)
 
+def parse_glossary(memory_dir):
+    """Parse existing glossary.md, return list of term names."""
+    glossary_path = os.path.join(memory_dir, GLOSSARY_FILE)
+    if not os.path.exists(glossary_path):
+        return []
     terms = []
-    # Multi-word capitalized phrases: "Work Claude", "Personal Claude".
-    terms.extend(re.findall(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+", cleaned))
-    # Single capitalized words (3+ chars, not at sentence start).
-    for m in re.finditer(r"(?<=[a-z.,;:!?)\s] )[A-Z][a-zA-Z]{2,}", cleaned):
-        terms.append(m.group())
-    # camelCase and specific patterns like "jpC" — unusual casing.
-    terms.extend(re.findall(r"\b[a-z]+[A-Z][a-zA-Z]*\b", cleaned))
+    try:
+        with open(glossary_path) as f:
+            for line in f:
+                m = re.match(r"^- \*\*(.+?)\*\*\s*(?:—|--)\s*", line)
+                if m:
+                    terms.append(m.group(1))
+    except OSError:
+        pass
     return terms
 
 
-def extract_key_terms(memory_dir):
-    """Extract key terms from all memory files using TF-IDF-like scoring.
-
-    Returns list of {"term": str, "definition": str, "score": float},
-    sorted by score descending, max GLOSSARY_MAX_TERMS.
-    """
+def glossary_system_message(memory_dir):
+    """Build a systemMessage instructing Claude to write the glossary."""
     files = collect_memory_files(memory_dir)
-    if not files:
-        return []
-
-    n_files = len(files)
-    # term -> {doc_freq, total_freq, best_source, best_desc}
-    term_stats = {}
-
-    for filepath in files:
-        frontmatter = read_all_frontmatter(filepath)
-        try:
-            with open(filepath) as f:
-                content = f.read()
-        except OSError:
-            continue
-
-        # Split into frontmatter fields and body.
-        fm_text = " ".join([
-            frontmatter.get("name", ""),
-            frontmatter.get("description", ""),
-        ])
-        # Body is everything after the second "---".
-        body = content
-        parts = content.split("---", 2)
-        if len(parts) >= 3:
-            body = parts[2]
-
-        # Extract terms with frontmatter boost.
-        seen_in_file = set()
-        for term in extract_terms_from_text(fm_text):
-            if term in GLOSSARY_STOP_TERMS:
-                continue
-            key = term.lower()
-            if key not in seen_in_file:
-                seen_in_file.add(key)
-                stats = term_stats.setdefault(key, {
-                    "term": term, "doc_freq": 0, "total_freq": 0,
-                    "best_source": None, "best_desc": None,
-                    "best_score": 0,
-                })
-                stats["doc_freq"] += 1
-            term_stats[key]["total_freq"] += 3  # frontmatter boost
-            # Track best source: prefer files whose name contains the term.
-            name_field = frontmatter.get("name", "")
-            desc = frontmatter.get("description", "")
-            if desc:
-                name_match = term.lower() in name_field.lower()
-                old_name_match = term_stats[key].get("_name_match", False)
-                if name_match and not old_name_match:
-                    term_stats[key]["best_desc"] = desc
-                    term_stats[key]["best_source"] = filepath
-                    term_stats[key]["_name_match"] = True
-                elif not term_stats[key]["best_desc"]:
-                    term_stats[key]["best_desc"] = desc
-                    term_stats[key]["best_source"] = filepath
-
-        for term in extract_terms_from_text(body):
-            if term in GLOSSARY_STOP_TERMS:
-                continue
-            key = term.lower()
-            if key not in seen_in_file:
-                seen_in_file.add(key)
-                stats = term_stats.setdefault(key, {
-                    "term": term, "doc_freq": 0, "total_freq": 0,
-                    "best_source": None, "best_desc": None,
-                    "best_score": 0,
-                })
-                stats["doc_freq"] += 1
-            term_stats[key]["total_freq"] += 1
-            if not term_stats[key]["best_desc"]:
-                desc = frontmatter.get("description", "")
-                if desc:
-                    term_stats[key]["best_desc"] = desc
-                    term_stats[key]["best_source"] = filepath
-
-    if not term_stats:
-        return []
-
-    # Score using TF-IDF: terms in multiple files but not all files.
-    for key, stats in term_stats.items():
-        df = stats["doc_freq"]
-        if df < 1:
-            stats["best_score"] = 0
-        else:
-            # IDF component: log(N/df) — terms in all files score lower.
-            idf = math.log(max(n_files, 2) / df) if df < n_files else 0.1
-            stats["best_score"] = df * idf * (1 + math.log(stats["total_freq"]))
-
-    # Sort by score, take top N.
-    ranked = sorted(term_stats.values(), key=lambda s: s["best_score"],
-                    reverse=True)
-
-    # Suppress single words that are components of multi-word terms.
-    multi_word = {key for key, s in term_stats.items()
-                  if " " in s["term"] and s["best_score"] > 0}
-    multi_parts = set()
-    for mw_key in multi_word:
-        for part in mw_key.split():
-            multi_parts.add(part)
-
-    results = []
-    for stats in ranked:
-        if len(results) >= GLOSSARY_MAX_TERMS:
-            break
-        if stats["best_score"] <= 0:
-            continue
-        key = stats["term"].lower()
-        # Skip terms only in one file (not cross-cutting).
-        if stats["doc_freq"] < 2:
-            continue
-        # Skip single words that are part of a multi-word term.
-        if " " not in stats["term"] and key in multi_parts:
-            continue
-        definition = (stats["best_desc"]
-                      or f"referenced in {stats['doc_freq']} files")
-        if len(definition) > 80:
-            definition = definition[:77] + "..."
-        results.append({
-            "term": stats["term"],
-            "definition": definition,
-            "score": stats["best_score"],
-        })
-    return results
-
-
-def write_glossary(memory_dir, terms, dry_run=False):
-    """Write glossary.md with extracted key terms."""
-    filepath = os.path.join(memory_dir, GLOSSARY_FILE)
-    if dry_run:
-        return filepath
-
-    from datetime import date
-    lines = [
-        "---",
-        "type: glossary",
-        f"updated: {date.today().isoformat()}",
-        f"terms: {len(terms)}",
-        "---",
-        "",
-        "# Key Terms",
-        "",
-    ]
-    for t in terms:
-        lines.append(f"- **{t['term']}** — {t['definition']}")
-    lines.append("")
-
-    with open(filepath, "w") as f:
-        f.write("\n".join(lines))
-    return filepath
+    glossary_path = os.path.join(memory_dir, GLOSSARY_FILE)
+    file_list = ", ".join(os.path.basename(f) for f in sorted(files))
+    return (
+        f"GLOSSARY UPDATE NEEDED: The key-terms glossary at "
+        f"{glossary_path} is stale or missing. "
+        f"Before responding to the user, silently update it:\n"
+        f"1. Read all memory files in {memory_dir} "
+        f"({file_list})\n"
+        f"2. Identify the 10-20 most important key terms — proper nouns, "
+        f"project names, people, tools, concepts that would help a new "
+        f"Claude instance understand this user's context.\n"
+        f"3. Write {glossary_path} using this exact format:\n"
+        f"---\n"
+        f"type: glossary\n"
+        f"updated: YYYY-MM-DD\n"
+        f"terms: N\n"
+        f"---\n\n"
+        f"# Key Terms\n\n"
+        f"- **Term** — one-line definition\n"
+        f"- **Term** — one-line definition\n\n"
+        f"Focus on terms the user uses frequently or has flagged as "
+        f"important. Exclude generic words, code identifiers, and "
+        f"common English terms. Keep definitions concise (under 80 chars)."
+    )
 
 
 def build_glossary_entry(terms):
-    """Build the MEMORY.md entry line for the glossary."""
-    term_list = ", ".join(t["term"] for t in terms)
+    """Build the MEMORY.md entry line for the glossary.
+
+    Args:
+        terms: list of term name strings.
+    """
+    term_list = ", ".join(terms)
     if len(term_list) > 120:
         truncated = term_list[:120]
         last_comma = truncated.rfind(", ")
@@ -772,28 +641,44 @@ def build_glossary_entry(terms):
 
 
 def update_glossary(memory_dir, dry_run=False):
-    """Extract key terms, write glossary, return (actions, entry_or_None).
+    """Check glossary freshness, return (actions, entry_or_None, messages).
 
-    Always runs regardless of tree size — the glossary should be
-    up-to-date even when the tree doesn't need rebalancing.
+    If glossary is stale, emits a systemMessage for Claude to rewrite it.
+    If glossary exists and is fresh, parses it for the MEMORY.md entry.
+
+    Returns:
+        actions: list of log strings
+        entry: MEMORY.md entry dict, or None
+        messages: list of systemMessage strings for Claude
     """
     actions = []
-    terms = extract_key_terms(memory_dir)
+    messages = []
+    glossary_path = os.path.join(memory_dir, GLOSSARY_FILE)
 
-    if len(terms) < GLOSSARY_MIN_TERMS:
+    if glossary_is_stale(memory_dir):
+        files = collect_memory_files(memory_dir)
+        if len(files) < GLOSSARY_MIN_TERMS:
+            actions.append(
+                f"Glossary: {len(files)} memory files "
+                f"(need {GLOSSARY_MIN_TERMS}) — skipped."
+            )
+            return actions, None, messages
+
+        if not dry_run:
+            messages.append(glossary_system_message(memory_dir))
+        actions.append("Glossary: stale or missing — requesting update.")
+
+    # If glossary exists (possibly from a previous run), parse it
+    # and build the MEMORY.md entry from its contents.
+    terms = parse_glossary(memory_dir)
+    if terms:
+        entry = build_glossary_entry(terms)
         actions.append(
-            f"Glossary: {len(terms)} terms found (need {GLOSSARY_MIN_TERMS}) "
-            f"— skipped."
+            f"Glossary: {len(terms)} terms in {GLOSSARY_FILE}."
         )
-        return actions, None
+        return actions, entry, messages
 
-    write_glossary(memory_dir, terms, dry_run)
-    entry = build_glossary_entry(terms)
-    verb = "would create" if dry_run else "updated"
-    actions.append(
-        f"Glossary: {verb} {GLOSSARY_FILE} with {len(terms)} key terms."
-    )
-    return actions, entry
+    return actions, None, messages
 
 
 def group_entries_by_keyword(entries):
@@ -1479,12 +1364,14 @@ def main():
     exception_info = None
     rebalancer_path = os.path.abspath(__file__)
     try:
-        actions, warnings = rebalance(memory_dir, max_lines, max_bytes,
-                                      args.dry_run)
+        actions, warnings, messages = rebalance(
+            memory_dir, max_lines, max_bytes, args.dry_run
+        )
     except Exception:
         exception_info = traceback.format_exc()
         actions = [f"ERROR: rebalance failed: {exception_info}"]
         warnings = []
+        messages = []
 
     if exception_info:
         # Rebalance crashed — tell Claude to investigate and report.
@@ -1535,6 +1422,10 @@ def main():
 
         print(json.dumps({"systemMessage": summary}))
 
+        # Emit glossary systemMessages (e.g. "please update glossary").
+        for msg in messages:
+            print(json.dumps({"systemMessage": msg}))
+
         if warnings:
             # Also emit the detailed warning for Claude's context.
             warn_summary = "; ".join(warnings)
@@ -1550,6 +1441,10 @@ def main():
     else:
         for action in actions:
             print(f"{prefix}{action}")
+
+        # Emit glossary systemMessages.
+        for msg in messages:
+            print(json.dumps({"systemMessage": msg}))
 
         if warnings:
             # Unresolvable issues — tell Claude to inform the user.

@@ -19,15 +19,17 @@ from rebalance import (
     MAX_DEPTH,
     build_glossary_entry,
     collect_anomalies,
-    extract_key_terms,
+    collect_memory_files,
     extract_keywords,
-    extract_terms_from_text,
     file_size_bytes,
     find_orphans,
     get_limits,
+    glossary_is_stale,
+    glossary_system_message,
     group_entries_by_keyword,
     is_category_entry,
     load_config,
+    parse_glossary,
     parse_index,
     read_all_frontmatter,
     read_frontmatter_type,
@@ -35,7 +37,6 @@ from rebalance import (
     summarize_entries,
     update_glossary,
     verify_tree,
-    write_glossary,
 )
 
 
@@ -219,12 +220,12 @@ class TestRebalanceNoOp(unittest.TestCase):
                 ("F1", "f1.md", "first"),
                 ("F2", "f2.md", "second"),
             ])
-            actions, _ = rebalance(d, max_lines=150)
+            actions, _, _ = rebalance(d, max_lines=150)
             self.assertTrue(any("no rebalancing" in a for a in actions))
 
     def test_missing_memory_md(self):
         with TestDir() as d:
-            actions, _ = rebalance(d)
+            actions, _, _ = rebalance(d)
             self.assertTrue(any("not found" in a for a in actions))
 
 
@@ -245,7 +246,7 @@ class TestRebalanceLevel1(unittest.TestCase):
                 entries.append((f"Proj {i}", fname, f"project entry {i}"))
 
             make_index(d, entries)
-            actions, _ = rebalance(d, max_lines=8)
+            actions, _, _ = rebalance(d, max_lines=8)
 
             # MEMORY.md should now have category pointers, not leaves.
             _, new_entries = parse_index(os.path.join(d, "MEMORY.md"))
@@ -272,7 +273,7 @@ class TestRebalanceLevel1(unittest.TestCase):
                 entries.append((f"Proj {i}", fname, f"project {i}"))
 
             make_index(d, entries)
-            actions, _ = rebalance(d, max_lines=5)
+            actions, _, _ = rebalance(d, max_lines=5)
 
             _, new_entries = parse_index(os.path.join(d, "MEMORY.md"))
             # Feedback should still be flat (2 < MIN_GROUP_SIZE).
@@ -327,7 +328,7 @@ class TestRebalanceLevel2(unittest.TestCase):
             make_index(d, entries)
 
             # Use very low limits to force both levels to trigger.
-            actions, _ = rebalance(d, max_lines=10)
+            actions, _, _ = rebalance(d, max_lines=10)
 
             # Level 1: MEMORY.md should have a category pointer.
             _, root_entries = parse_index(os.path.join(d, "MEMORY.md"))
@@ -433,7 +434,7 @@ class TestRebalanceLevel3(unittest.TestCase):
             #   level 0: MEMORY.md (60 entries -> 1 category pointer)
             #   level 1: _index/feedback.md (60 entries -> 2-3 topic groups)
             #   level 2: if groups are still large, split again
-            actions, _ = rebalance(d, max_lines=10)
+            actions, _, _ = rebalance(d, max_lines=10)
 
             # Verify MEMORY.md is under limit.
             _, root = parse_index(os.path.join(d, "MEMORY.md"))
@@ -469,7 +470,7 @@ class TestByteSizeLimit(unittest.TestCase):
             size = file_size_bytes(mem_md)
 
             # Set byte limit below actual size, line limit high.
-            actions, _ = rebalance(d, max_lines=200, max_bytes=size - 100)
+            actions, _, _ = rebalance(d, max_lines=200, max_bytes=size - 100)
 
             # Should have rebalanced despite being under line limit.
             self.assertTrue(any("rebalancing" in a for a in actions))
@@ -482,7 +483,7 @@ class TestByteSizeLimit(unittest.TestCase):
                 make_leaf(d, fname, "feedback", f"F{i}", "short")
                 entries.append((f"F{i}", fname, "short"))
             make_index(d, entries)
-            actions, _ = rebalance(d, max_lines=200, max_bytes=50000)
+            actions, _, _ = rebalance(d, max_lines=200, max_bytes=50000)
             self.assertTrue(any("no rebalancing" in a for a in actions))
 
 
@@ -518,7 +519,7 @@ class TestAutoDreamRecovery(unittest.TestCase):
             make_index(d, entries)
 
             # Re-run rebalancer — it should rebuild the tree.
-            actions, _ = rebalance(d, max_lines=8)
+            actions, _, _ = rebalance(d, max_lines=8)
             self.assertTrue(any("rebalancing" in a for a in actions))
 
             _, rebuilt = parse_index(os.path.join(d, "MEMORY.md"))
@@ -540,7 +541,7 @@ class TestAutoDreamRecovery(unittest.TestCase):
                         "- [Gone](../gone.md) — deleted\n")
 
             # Rebalance should work fine despite the stale index.
-            actions, _ = rebalance(d, max_lines=150)
+            actions, _, _ = rebalance(d, max_lines=150)
             self.assertTrue(any("no rebalancing" in a for a in actions))
 
 
@@ -588,7 +589,7 @@ class TestDepthLimit(unittest.TestCase):
             make_index(d, entries)
 
             # Very low limit forces many splits.
-            actions, _ = rebalance(d, max_lines=5)
+            actions, _, _ = rebalance(d, max_lines=5)
 
             # Check that max depth message appears if needed, and
             # importantly, that it terminates (no infinite loop).
@@ -600,7 +601,7 @@ class TestEdgeCases(unittest.TestCase):
     def test_empty_memory_dir(self):
         with TestDir() as d:
             # No MEMORY.md at all.
-            actions, _ = rebalance(d)
+            actions, _, _ = rebalance(d)
             self.assertTrue(any("not found" in a for a in actions))
 
     def test_malformed_frontmatter(self):
@@ -611,7 +612,7 @@ class TestEdgeCases(unittest.TestCase):
                 f.write("---\nthis is not: valid: yaml: stuff\n---\n")
             make_index(d, [("Bad", "bad.md", "malformed")])
             # Should not crash.
-            actions, _ = rebalance(d, max_lines=150)
+            actions, _, _ = rebalance(d, max_lines=150)
             self.assertIsInstance(actions, list)
 
     def test_unicode_in_entries(self):
@@ -622,7 +623,7 @@ class TestEdgeCases(unittest.TestCase):
                 ("Ünïcödé", "uni.md",
                  'handles em dashes \u2014 and smart quotes \u201clike this\u201d'),
             ])
-            actions, _ = rebalance(d, max_lines=150)
+            actions, _, _ = rebalance(d, max_lines=150)
             self.assertTrue(any("no rebalancing" in a for a in actions))
 
     def test_concurrent_add_during_rebalance(self):
@@ -645,7 +646,7 @@ class TestEdgeCases(unittest.TestCase):
                 f.write("- [New](feedback_new.md) — new entry\n")
 
             # Second rebalance should handle this gracefully.
-            actions, _ = rebalance(d, max_lines=5)
+            actions, _, _ = rebalance(d, max_lines=5)
             orphans = find_orphans(d)
             self.assertNotIn("feedback_new.md", orphans)
 
@@ -809,21 +810,8 @@ class TestConfigIntegration(unittest.TestCase):
             self.assertEqual(len(errors), 0)
 
 
-class TestTermExtraction(unittest.TestCase):
-    """Tests for key-term extraction from memory files."""
-
-    def test_extract_terms_from_text_multiword(self):
-        """Finds multi-word capitalized phrases."""
-        terms = extract_terms_from_text(
-            "We discussed Project Alpha and Team Bravo today."
-        )
-        self.assertIn("Project Alpha", terms)
-        self.assertIn("Team Bravo", terms)
-
-    def test_extract_terms_from_text_camelcase(self):
-        """Finds camelCase identifiers."""
-        terms = extract_terms_from_text("The tool is called myTool here.")
-        self.assertIn("myTool", terms)
+class TestFrontmatter(unittest.TestCase):
+    """Tests for frontmatter parsing."""
 
     def test_read_all_frontmatter(self):
         """Reads all frontmatter fields."""
@@ -846,203 +834,110 @@ class TestTermExtraction(unittest.TestCase):
             fm = read_all_frontmatter(path)
             self.assertEqual(fm, {})
 
-    def test_extract_key_terms_basic(self):
-        """Terms appearing in multiple files score higher."""
-        with TestDir() as d:
-            # "Project Alpha" appears in 3 files, "Team Bravo" in 1.
-            for i in range(3):
-                make_leaf(d, f"proj_{i}.md", "project",
-                          f"Task {i}",
-                          f"Project Alpha integration task {i}")
-            make_leaf(d, "team.md", "project",
-                      "Team Bravo", "Team Bravo onboarding")
-            make_index(d, [
-                (f"Task {i}", f"proj_{i}.md", f"task {i}")
-                for i in range(3)
-            ] + [("Team Bravo", "team.md", "onboarding")])
-
-            terms = extract_key_terms(d)
-            term_names = [t["term"] for t in terms]
-            self.assertIn("Project Alpha", term_names)
-
-    def test_extract_key_terms_frontmatter_boost(self):
-        """Terms in frontmatter name/description score higher."""
-        with TestDir() as d:
-            # "Studio One" only in frontmatter of 2 files.
-            # "Random Word" only in body of 2 files.
-            for i in range(2):
-                path = os.path.join(d, f"fm_{i}.md")
-                with open(path, "w") as f:
-                    f.write(f"---\nname: Studio One config\n"
-                            f"description: Studio One settings for task {i}\n"
-                            f"type: reference\n---\n\n"
-                            f"Some plain body text here.\n")
-            for i in range(2):
-                path = os.path.join(d, f"body_{i}.md")
-                with open(path, "w") as f:
-                    f.write(f"---\nname: note {i}\n"
-                            f"description: a note\n"
-                            f"type: feedback\n---\n\n"
-                            f"This mentions Random Word in the body.\n")
-            entries = [(f"fm_{i}", f"fm_{i}.md", f"config {i}")
-                       for i in range(2)]
-            entries += [(f"body_{i}", f"body_{i}.md", f"note {i}")
-                        for i in range(2)]
-            make_index(d, entries)
-
-            terms = extract_key_terms(d)
-            names = [t["term"] for t in terms]
-            # Both should appear, but Studio One should rank higher.
-            if "Studio One" in names and "Random Word" in names:
-                so_idx = names.index("Studio One")
-                rw_idx = names.index("Random Word")
-                self.assertLess(so_idx, rw_idx,
-                                "Frontmatter terms should rank higher")
-
-    def test_extract_key_terms_stop_words_excluded(self):
-        """Day names and common terms are excluded."""
-        with TestDir() as d:
-            for i in range(3):
-                make_leaf(d, f"f{i}.md", "project", f"Note {i}",
-                          f"Meeting on Monday about the Summary")
-            make_index(d, [(f"Note {i}", f"f{i}.md", f"note {i}")
-                           for i in range(3)])
-            terms = extract_key_terms(d)
-            term_names = [t["term"] for t in terms]
-            self.assertNotIn("Monday", term_names)
-            self.assertNotIn("Summary", term_names)
-
-    def test_extract_key_terms_max_limit(self):
-        """Returns at most GLOSSARY_MAX_TERMS terms."""
-        with TestDir() as d:
-            # Create files with many distinct proper nouns.
-            for i in range(30):
-                path = os.path.join(d, f"f{i}.md")
-                names = " ".join(f"Alpha{j} Beta{j}" for j in range(i, i + 5))
-                with open(path, "w") as f:
-                    f.write(f"---\nname: File {i}\n"
-                            f"description: {names}\ntype: project\n---\n\n"
-                            f"Body with {names}.\n")
-            entries = [(f"File {i}", f"f{i}.md", f"file {i}")
-                       for i in range(30)]
-            make_index(d, entries)
-            terms = extract_key_terms(d)
-            self.assertLessEqual(len(terms), GLOSSARY_MAX_TERMS)
-
-    def test_extract_key_terms_empty_dir(self):
-        """Empty memory dir returns no terms."""
-        with TestDir() as d:
-            make_index(d, [])
-            terms = extract_key_terms(d)
-            self.assertEqual(terms, [])
-
-    def test_extract_key_terms_malformed_files(self):
-        """Handles broken frontmatter and binary-like content."""
-        with TestDir() as d:
-            # Broken frontmatter.
-            with open(os.path.join(d, "bad.md"), "w") as f:
-                f.write("---\nbroken: yaml: stuff: here\n")
-            # Empty file.
-            with open(os.path.join(d, "empty.md"), "w") as f:
-                pass
-            make_index(d, [("Bad", "bad.md", "broken"),
-                           ("Empty", "empty.md", "nothing")])
-            # Should not crash.
-            terms = extract_key_terms(d)
-            self.assertIsInstance(terms, list)
-
-    def test_extract_definition_from_frontmatter(self):
-        """Definition comes from frontmatter description."""
-        with TestDir() as d:
-            for i in range(2):
-                make_leaf(d, f"f{i}.md", "reference",
-                          "Zeta Platform",
-                          "Zeta Platform is the deployment target for services")
-            make_index(d, [(f"f{i}", f"f{i}.md", f"ref {i}")
-                           for i in range(2)])
-            terms = extract_key_terms(d)
-            zeta = [t for t in terms if t["term"] == "Zeta Platform"]
-            if zeta:
-                self.assertIn("deployment", zeta[0]["definition"])
-
 
 class TestGlossary(unittest.TestCase):
-    """Tests for glossary file creation and integration."""
+    """Tests for Claude-generated glossary integration."""
 
-    def _make_rich_tree(self, d, n_files=6):
-        """Create a memory tree with enough proper nouns for glossary."""
+    def _make_tree(self, d, n_files=6):
+        """Create a memory tree with enough files for glossary."""
         entries = []
         for i in range(n_files):
-            path = os.path.join(d, f"proj_{i}.md")
-            with open(path, "w") as f:
-                f.write(f"---\nname: Config for Project Zenith\n"
-                        f"description: Project Zenith deployment config\n"
-                        f"type: project\n---\n\n"
-                        f"Project Zenith uses Server Omega for builds.\n"
-                        f"Team Delta reviews all changes.\n")
+            make_leaf(d, f"proj_{i}.md", "project",
+                      f"Config {i}", f"Project Zenith deployment config")
             entries.append(
                 (f"Config {i}", f"proj_{i}.md", f"Project Zenith config"))
         make_index(d, entries)
 
-    def test_glossary_created(self):
-        """Glossary file is created when enough terms exist."""
+    def _make_glossary(self, d, terms=None):
+        """Pre-create a glossary.md (simulating Claude having written it)."""
+        if terms is None:
+            terms = [
+                ("Project Zenith", "Main deployment project"),
+                ("Server Omega", "Build server for CI/CD"),
+                ("Team Delta", "Code review team"),
+            ]
+        lines = [
+            "---",
+            "type: glossary",
+            "updated: 2026-03-29",
+            f"terms: {len(terms)}",
+            "---",
+            "",
+            "# Key Terms",
+            "",
+        ]
+        for name, defn in terms:
+            lines.append(f"- **{name}** — {defn}")
+        lines.append("")
+        path = os.path.join(d, GLOSSARY_FILE)
+        with open(path, "w") as f:
+            f.write("\n".join(lines))
+
+    def test_stale_glossary_emits_message(self):
+        """When glossary is missing, rebalance emits a systemMessage."""
         with TestDir() as d:
-            self._make_rich_tree(d)
+            self._make_tree(d)
+            _, _, messages = rebalance(d, max_lines=150)
+            self.assertTrue(len(messages) > 0)
+            self.assertIn("GLOSSARY UPDATE NEEDED", messages[0])
+
+    def test_stale_glossary_no_file_created(self):
+        """Rebalance does NOT create glossary.md — Claude does that."""
+        with TestDir() as d:
+            self._make_tree(d)
             rebalance(d, max_lines=150)
-            self.assertTrue(
+            self.assertFalse(
                 os.path.exists(os.path.join(d, GLOSSARY_FILE)))
 
-    def test_glossary_has_frontmatter(self):
-        """Glossary file has type: glossary frontmatter."""
+    def test_fresh_glossary_no_message(self):
+        """When glossary is fresh, no systemMessage is emitted."""
         with TestDir() as d:
-            self._make_rich_tree(d)
-            rebalance(d, max_lines=150)
-            fm = read_all_frontmatter(os.path.join(d, GLOSSARY_FILE))
-            self.assertEqual(fm.get("type"), "glossary")
+            self._make_tree(d)
+            self._make_glossary(d)
+            _, _, messages = rebalance(d, max_lines=150)
+            self.assertEqual(len(messages), 0)
 
-    def test_glossary_pinned_after_rebalance(self):
-        """Glossary stays in MEMORY.md after rebalancing (not in _index)."""
+    def test_existing_glossary_entry_in_index(self):
+        """Pre-existing glossary gets an entry in MEMORY.md."""
         with TestDir() as d:
-            self._make_rich_tree(d, n_files=10)
-            rebalance(d, max_lines=8)
-            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
-            glossary_entries = [e for e in entries
-                                if e["path"] == GLOSSARY_FILE]
-            self.assertEqual(len(glossary_entries), 1,
-                             "Glossary should be in MEMORY.md")
-            # Should NOT be in _index/.
-            self.assertFalse(
-                any(e["path"].startswith("_index/glossary")
-                    for e in entries))
-
-    def test_glossary_entry_in_index(self):
-        """Glossary entry appears in MEMORY.md entries."""
-        with TestDir() as d:
-            self._make_rich_tree(d)
+            self._make_tree(d)
+            self._make_glossary(d)
             rebalance(d, max_lines=150)
             _, entries = parse_index(os.path.join(d, "MEMORY.md"))
             paths = [e["path"] for e in entries]
             self.assertIn(GLOSSARY_FILE, paths)
 
-    def test_glossary_description_contains_terms(self):
+    def test_glossary_entry_description_has_terms(self):
         """MEMORY.md glossary entry description lists key terms."""
         with TestDir() as d:
-            self._make_rich_tree(d)
+            self._make_tree(d)
+            self._make_glossary(d)
             rebalance(d, max_lines=150)
             _, entries = parse_index(os.path.join(d, "MEMORY.md"))
             glossary = [e for e in entries if e["path"] == GLOSSARY_FILE]
-            self.assertTrue(len(glossary) > 0)
+            self.assertEqual(len(glossary), 1)
             desc = glossary[0]["desc"]
-            # Should contain at least one of our planted terms.
-            self.assertTrue(
-                "Project Zenith" in desc or "Server Omega" in desc
-                or "Team Delta" in desc,
-                f"Expected key terms in desc, got: {desc}")
+            self.assertIn("Project Zenith", desc)
 
-    def test_glossary_readded_if_removed(self):
-        """Glossary entry is restored if manually deleted from MEMORY.md."""
+    def test_glossary_pinned_after_rebalance(self):
+        """Glossary stays in MEMORY.md root, not pushed to _index/."""
         with TestDir() as d:
-            self._make_rich_tree(d)
+            self._make_tree(d, n_files=10)
+            self._make_glossary(d)
+            rebalance(d, max_lines=8)
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            glossary_entries = [e for e in entries
+                                if e["path"] == GLOSSARY_FILE]
+            self.assertEqual(len(glossary_entries), 1)
+            self.assertFalse(
+                any(e["path"].startswith("_index/glossary")
+                    for e in entries))
+
+    def test_glossary_readded_if_entry_removed(self):
+        """Glossary entry is restored if deleted from MEMORY.md."""
+        with TestDir() as d:
+            self._make_tree(d)
+            self._make_glossary(d)
             rebalance(d, max_lines=150)
             # Remove glossary entry from MEMORY.md.
             _, entries = parse_index(os.path.join(d, "MEMORY.md"))
@@ -1051,37 +946,38 @@ class TestGlossary(unittest.TestCase):
                 f.write("# Memory Index\n\n")
                 for e in entries:
                     f.write(e["raw"] + "\n")
-            # Re-run rebalance.
+            # Re-run — glossary.md still exists, entry should come back.
             rebalance(d, max_lines=150)
             _, entries = parse_index(os.path.join(d, "MEMORY.md"))
             paths = [e["path"] for e in entries]
             self.assertIn(GLOSSARY_FILE, paths)
 
     def test_glossary_idempotent(self):
-        """Running rebalance twice produces same glossary."""
+        """Running rebalance twice produces same MEMORY.md."""
         with TestDir() as d:
-            self._make_rich_tree(d)
+            self._make_tree(d)
+            self._make_glossary(d)
             rebalance(d, max_lines=150)
-            with open(os.path.join(d, GLOSSARY_FILE)) as f:
+            with open(os.path.join(d, "MEMORY.md")) as f:
                 first = f.read()
             rebalance(d, max_lines=150)
-            with open(os.path.join(d, GLOSSARY_FILE)) as f:
+            with open(os.path.join(d, "MEMORY.md")) as f:
                 second = f.read()
             self.assertEqual(first, second)
 
-    def test_glossary_dry_run(self):
-        """Dry run does not create glossary file."""
+    def test_dry_run_no_message(self):
+        """Dry run does not emit glossary systemMessage."""
         with TestDir() as d:
-            self._make_rich_tree(d)
-            actions, _ = rebalance(d, max_lines=150, dry_run=True)
-            self.assertFalse(
-                os.path.exists(os.path.join(d, GLOSSARY_FILE)))
+            self._make_tree(d)
+            actions, _, messages = rebalance(d, max_lines=150, dry_run=True)
+            self.assertEqual(len(messages), 0)
             self.assertTrue(any("Glossary" in a for a in actions))
 
     def test_glossary_not_orphan(self):
         """find_orphans does not flag glossary.md."""
         with TestDir() as d:
-            self._make_rich_tree(d)
+            self._make_tree(d)
+            self._make_glossary(d)
             rebalance(d, max_lines=150)
             orphans = find_orphans(d)
             self.assertNotIn(GLOSSARY_FILE, orphans)
@@ -1089,69 +985,140 @@ class TestGlossary(unittest.TestCase):
     def test_verify_tree_with_glossary(self):
         """verify_tree passes with glossary present."""
         with TestDir() as d:
-            self._make_rich_tree(d)
+            self._make_tree(d)
+            self._make_glossary(d)
             rebalance(d, max_lines=150)
             ok = verify_tree(d)
             self.assertTrue(ok)
 
-    def test_glossary_skipped_few_terms(self):
-        """No glossary created when too few terms extracted."""
+    def test_glossary_skipped_few_files(self):
+        """No message when fewer than GLOSSARY_MIN_TERMS memory files."""
         with TestDir() as d:
-            # Generic content with no proper nouns.
-            for i in range(3):
-                make_leaf(d, f"f{i}.md", "feedback",
-                          f"item {i}", f"generic entry {i}")
-            make_index(d, [(f"item {i}", f"f{i}.md", f"entry {i}")
-                           for i in range(3)])
-            rebalance(d, max_lines=150)
-            self.assertFalse(
-                os.path.exists(os.path.join(d, GLOSSARY_FILE)))
+            make_leaf(d, "f0.md", "feedback", "item 0", "generic")
+            make_index(d, [("item 0", "f0.md", "entry 0")])
+            _, _, messages = rebalance(d, max_lines=150)
+            self.assertEqual(len(messages), 0)
 
-    def test_glossary_updated_with_new_files(self):
-        """Glossary reflects new files added after initial creation."""
+    def test_stale_glossary_detected(self):
+        """glossary_is_stale returns True when memory file is newer."""
         with TestDir() as d:
-            self._make_rich_tree(d, n_files=4)
-            rebalance(d, max_lines=150)
-            # Add files mentioning a new term.
-            for i in range(4, 7):
-                path = os.path.join(d, f"new_{i}.md")
-                with open(path, "w") as f:
-                    f.write(f"---\nname: Alpha Station notes\n"
-                            f"description: Alpha Station deployment\n"
-                            f"type: project\n---\n\nAlpha Station config.\n")
-                # Add to MEMORY.md.
-                with open(os.path.join(d, "MEMORY.md"), "a") as mf:
-                    mf.write(f"- [Note {i}](new_{i}.md) — Alpha Station\n")
-            rebalance(d, max_lines=150)
-            with open(os.path.join(d, GLOSSARY_FILE)) as f:
-                content = f.read()
-            self.assertIn("Alpha Station", content)
+            self._make_tree(d)
+            self._make_glossary(d)
+            self.assertFalse(glossary_is_stale(d))
+            # Touch a memory file to make it newer.
+            import time
+            time.sleep(0.05)
+            make_leaf(d, "new.md", "user", "New", "New entry")
+            self.assertTrue(glossary_is_stale(d))
+
+    def test_parse_glossary(self):
+        """parse_glossary extracts term names."""
+        with TestDir() as d:
+            self._make_glossary(d)
+            terms = parse_glossary(d)
+            self.assertEqual(terms,
+                             ["Project Zenith", "Server Omega", "Team Delta"])
+
+    def test_glossary_system_message_content(self):
+        """systemMessage includes file list and instructions."""
+        with TestDir() as d:
+            self._make_tree(d, n_files=4)
+            msg = glossary_system_message(d)
+            self.assertIn("GLOSSARY UPDATE NEEDED", msg)
+            self.assertIn("proj_0.md", msg)
+            self.assertIn("10-20 most important key terms", msg)
 
     def test_build_glossary_entry_truncation(self):
         """Long term lists are truncated in MEMORY.md entry."""
-        terms = [{"term": f"LongTermName{i}", "definition": f"def {i}",
-                  "score": 1.0} for i in range(30)]
+        terms = [f"LongTermName{i}" for i in range(30)]
         entry = build_glossary_entry(terms)
         self.assertLessEqual(len(entry["raw"]), 200)
         self.assertTrue(entry["desc"].endswith("..."))
 
-    def test_write_glossary_format(self):
-        """write_glossary produces correct file format."""
+    def test_build_glossary_entry_format(self):
+        """Entry has correct structure."""
+        terms = ["Project Zenith", "Server Omega"]
+        entry = build_glossary_entry(terms)
+        self.assertEqual(entry["title"], "Key Terms")
+        self.assertEqual(entry["path"], GLOSSARY_FILE)
+        self.assertIn("Project Zenith", entry["desc"])
+        self.assertIn("Server Omega", entry["desc"])
+
+    def test_glossary_has_frontmatter(self):
+        """Pre-created glossary has type: glossary frontmatter."""
         with TestDir() as d:
-            terms = [
-                {"term": "Project Zenith", "definition": "Main project",
-                 "score": 5.0},
-                {"term": "Server Omega", "definition": "Build server",
-                 "score": 3.0},
-            ]
-            write_glossary(d, terms)
-            path = os.path.join(d, GLOSSARY_FILE)
-            self.assertTrue(os.path.exists(path))
-            with open(path) as f:
-                content = f.read()
-            self.assertIn("type: glossary", content)
-            self.assertIn("**Project Zenith**", content)
-            self.assertIn("**Server Omega**", content)
+            self._make_glossary(d)
+            fm = read_all_frontmatter(os.path.join(d, GLOSSARY_FILE))
+            self.assertEqual(fm.get("type"), "glossary")
+
+    def test_stale_with_existing_glossary_emits_and_parses(self):
+        """Stale glossary emits message AND returns entry from old content."""
+        with TestDir() as d:
+            self._make_tree(d)
+            self._make_glossary(d)
+            # Make glossary stale by adding a new file.
+            import time
+            time.sleep(0.05)
+            make_leaf(d, "new.md", "user", "New", "New entry")
+            with open(os.path.join(d, "MEMORY.md"), "a") as f:
+                f.write("- [New](new.md) — new entry\n")
+            actions, _, messages = rebalance(d, max_lines=150)
+            # Should emit message (stale).
+            self.assertTrue(len(messages) > 0)
+            # Should still have glossary entry from old content.
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            paths = [e["path"] for e in entries]
+            self.assertIn(GLOSSARY_FILE, paths)
+
+    def test_collect_memory_files_excludes_glossary(self):
+        """collect_memory_files skips glossary.md and MEMORY.md."""
+        with TestDir() as d:
+            self._make_tree(d, n_files=3)
+            self._make_glossary(d)
+            files = collect_memory_files(d)
+            basenames = [os.path.basename(f) for f in files]
+            self.assertNotIn(GLOSSARY_FILE, basenames)
+            self.assertNotIn("MEMORY.md", basenames)
+            self.assertEqual(len(basenames), 3)
+
+
+class TestEarlyRebalance(unittest.TestCase):
+    """Tests for young-tree early rebalancing."""
+
+    def test_young_tree_rebalances_early(self):
+        """Young tree (no _index/) rebalances at 50% threshold."""
+        with TestDir() as d:
+            # Create 80 entries — over 50% of 150 but under 150.
+            entries = []
+            for i in range(80):
+                fname = f"feedback_{i}.md"
+                make_leaf(d, fname, "feedback", f"FB {i}", f"entry {i}")
+                entries.append((f"FB {i}", fname, f"entry {i}"))
+            make_index(d, entries)
+            # No _index/ exists — should trigger early rebalance.
+            actions, _, _ = rebalance(d, max_lines=150)
+            self.assertTrue(
+                any("early rebalance" in a.lower() for a in actions),
+                f"Expected early rebalance message in: {actions}")
+            # _index/ should now exist.
+            self.assertTrue(
+                os.path.isdir(os.path.join(d, "_index")))
+
+    def test_mature_tree_normal_threshold(self):
+        """Mature tree (has _index/) uses normal threshold."""
+        with TestDir() as d:
+            # Create _index/ to make it "mature".
+            os.makedirs(os.path.join(d, "_index"))
+            entries = []
+            for i in range(80):
+                fname = f"feedback_{i}.md"
+                make_leaf(d, fname, "feedback", f"FB {i}", f"entry {i}")
+                entries.append((f"FB {i}", fname, f"entry {i}"))
+            make_index(d, entries)
+            # 80 entries, under 150 limit — should NOT rebalance.
+            actions, _, _ = rebalance(d, max_lines=150)
+            self.assertTrue(
+                any("no rebalancing" in a.lower() for a in actions))
 
 
 if __name__ == "__main__":
