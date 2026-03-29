@@ -275,8 +275,26 @@ def main():
         settings = install_hooks(args.settings, hooks)
         print(f"Hooks installed in {args.settings}")
         print(f"Rebalancer: {rebalancer_path}")
-        print("\nVerifying:")
+        print("\nVerifying hooks:")
         check_hooks(args.settings, rebalancer_path)
+
+        # Run initial rebalance + verify on all memory directories.
+        import glob
+        from rebalance import rebalance as do_rebalance, verify_tree
+        memory_dirs = glob.glob(os.path.expanduser(
+            "~/.claude/projects/*/memory"
+        ))
+        for d in memory_dirs:
+            memory_md = os.path.join(d, "MEMORY.md")
+            if os.path.exists(memory_md):
+                print(f"\nInitial health check: {d}")
+                actions, warnings = do_rebalance(d)
+                for a in actions:
+                    print(f"  {a}")
+                if warnings:
+                    for w in warnings:
+                        print(f"  WARN: {w}")
+                verify_tree(d)
         return
 
     # Default: print the hook JSON for manual pasting.
