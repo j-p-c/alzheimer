@@ -59,6 +59,17 @@ models (Opus, Sonnet, Haiku).
 After that, the hooks fire automatically on every memory write, session
 start, and compaction. No further configuration needed.
 
+### Updating
+
+> **"Update alzheimer"**
+
+Claude will find the existing installation from your settings, pull the
+latest changes, and re-verify. Under the hood:
+
+1. Find the install directory by searching `~/.claude/settings.json` for
+   the path to `rebalance.py`
+2. Run `python3 setup.py --update` from that directory
+
 ### Manual installation
 
 If you prefer to do it yourself:

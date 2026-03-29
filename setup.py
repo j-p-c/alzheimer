@@ -155,6 +155,74 @@ def check_hooks(settings_path, rebalancer_path):
     return ok
 
 
+def find_install_dir(settings_path):
+    """Find where alzheimer is installed by reading settings.json.
+
+    Parses hook commands for the path to rebalance.py and returns
+    the containing directory, or None if not found.
+    """
+    if not os.path.exists(settings_path):
+        return None
+    try:
+        settings = read_settings(settings_path)
+        hooks = settings.get("hooks", {})
+        for event, groups in hooks.items():
+            for group in groups:
+                for hook in group.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    # Look for python3 "/.../rebalance.py" or
+                    # python3 /.../rebalance.py in the command.
+                    import re
+                    m = re.search(r'python3\s+"?([^"]+/rebalance\.py)"?',
+                                  cmd)
+                    if m:
+                        rpath = m.group(1)
+                        if os.path.exists(rpath):
+                            return os.path.dirname(rpath)
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
+def do_update(settings_path):
+    """Pull latest changes and re-install hooks.
+
+    Can be run from the alzheimer directory itself (setup.py --update)
+    or used by Claude after finding the install dir via settings.json.
+    """
+    import subprocess
+
+    alzheimer_dir = os.path.dirname(os.path.abspath(__file__))
+
+    print(f"Alzheimer directory: {alzheimer_dir}")
+    print()
+
+    # Pull latest.
+    print("Pulling latest changes...")
+    result = subprocess.run(
+        ["git", "pull"], cwd=alzheimer_dir,
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f"git pull failed: {result.stderr.strip()}")
+        return False
+    print(f"  {result.stdout.strip()}")
+    print()
+
+    # Re-install hooks (in case hook format changed).
+    print("Re-installing hooks...")
+    rebalancer_path = get_rebalancer_path()
+    hooks = generate_hooks(rebalancer_path)
+    install_hooks(settings_path, hooks)
+    print(f"  Hooks updated in {settings_path}")
+    print()
+
+    # Verify.
+    print("Verifying:")
+    ok = check_hooks(settings_path, rebalancer_path)
+    return ok
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(
@@ -169,10 +237,32 @@ def main():
         help="Verify hooks are installed correctly.",
     )
     parser.add_argument(
+        "--update", action="store_true",
+        help="Pull latest changes and re-install hooks.",
+    )
+    parser.add_argument(
+        "--find", action="store_true",
+        help="Print the alzheimer install directory (from settings.json).",
+    )
+    parser.add_argument(
         "--settings", default=os.path.expanduser("~/.claude/settings.json"),
         help="Path to settings file (default: ~/.claude/settings.json).",
     )
     args = parser.parse_args()
+
+    if args.find:
+        install_dir = find_install_dir(args.settings)
+        if install_dir:
+            print(install_dir)
+        else:
+            print("Alzheimer is not installed (not found in settings).",
+                  file=sys.stderr)
+            sys.exit(1)
+        return
+
+    if args.update:
+        ok = do_update(args.settings)
+        sys.exit(0 if ok else 1)
 
     rebalancer_path = get_rebalancer_path()
     hooks = generate_hooks(rebalancer_path)
