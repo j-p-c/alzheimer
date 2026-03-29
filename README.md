@@ -53,8 +53,8 @@ models (Opus, Sonnet, Haiku).
 
 1. Clone this repo to a suitable location on your machine
 2. Run `python3 setup.py --install` (merges hooks into your
-   `~/.claude/settings.json` without disturbing existing settings)
-3. Run `python3 setup.py --check` to verify
+   `~/.claude/settings.json` without disturbing existing settings,
+   then rebalances and verifies all existing memory directories)
 
 After that, the hooks fire automatically on every memory write, session
 start, and compaction. No further configuration needed.
