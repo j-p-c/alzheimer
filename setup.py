@@ -379,12 +379,14 @@ def main():
             memory_md = os.path.join(d, "MEMORY.md")
             if os.path.exists(memory_md):
                 print(f"\nInitial health check: {d}")
-                actions, warnings = do_rebalance(d)
+                actions, warnings, messages = do_rebalance(d)
                 for a in actions:
                     print(f"  {a}")
                 if warnings:
                     for w in warnings:
                         print(f"  WARN: {w}")
+                if messages:
+                    print(f"  Glossary update needed ({len(messages)} message(s))")
                 verify_tree(d)
         return
 
