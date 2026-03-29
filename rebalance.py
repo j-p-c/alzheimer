@@ -344,13 +344,16 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
               max_bytes=DEFAULT_MAX_BYTES, dry_run=False):
     """Rebalance the memory tree rooted at MEMORY.md.
 
-    Returns a list of action descriptions (for logging / dry-run).
+    Returns (actions, warnings) where:
+        actions:  list of action descriptions (for logging / dry-run)
+        warnings: list of unresolvable issues (max depth, too few to split)
     """
     actions = []
+    warnings = []
     memory_md = os.path.join(memory_dir, "MEMORY.md")
 
     if not os.path.exists(memory_md):
-        return ["MEMORY.md not found — nothing to do."]
+        return ["MEMORY.md not found — nothing to do."], []
 
     header, entries = parse_index(memory_md)
     total_lines = len(header) + len(entries) + 1  # +1 for trailing newline
@@ -370,12 +373,13 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
             if is_category_entry(entry):
                 child_path = os.path.join(memory_dir, entry["path"])
                 if os.path.exists(child_path):
-                    sub = rebalance_index(
+                    sub_actions, sub_warns = rebalance_index(
                         memory_dir, entry["path"], max_lines,
                         max_bytes, dry_run
                     )
-                    actions.extend(sub)
-        return actions
+                    actions.extend(sub_actions)
+                    warnings.extend(sub_warns)
+        return actions, warnings
 
     size_info = f"{total_lines} lines, {total_bytes} bytes"
     actions.append(
@@ -457,13 +461,14 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
         if is_category_entry(entry):
             child_path = os.path.join(memory_dir, entry["path"])
             if os.path.exists(child_path):
-                sub = rebalance_index(
+                sub_actions, sub_warns = rebalance_index(
                     memory_dir, entry["path"], max_lines,
                     max_bytes, dry_run
                 )
-                actions.extend(sub)
+                actions.extend(sub_actions)
+                warnings.extend(sub_warns)
 
-    return actions
+    return actions, warnings
 
 
 def extract_keywords(text):
@@ -620,31 +625,42 @@ def rebalance_index(memory_dir, rel_path, max_lines, max_bytes,
 
     At level 2+, groups entries by shared keywords extracted from
     their titles and descriptions.
+
+    Returns (actions, warnings).
     """
     actions = []
+    warnings = []
     full_path = os.path.join(memory_dir, rel_path)
     indent = "  " * (depth + 1)
 
     if not os.path.exists(full_path):
-        return actions
+        return actions, warnings
 
     if depth >= MAX_DEPTH:
         actions.append(f"{indent}{rel_path}: max depth {MAX_DEPTH} reached.")
-        return actions
+        warnings.append(
+            f"{rel_path}: max tree depth ({MAX_DEPTH}) reached — "
+            f"file may exceed size limits"
+        )
+        return actions, warnings
 
     header, entries = parse_index(full_path)
     total_lines = len(header) + len(entries) + 1
 
     if not exceeds_limits(full_path, header, entries, max_lines, max_bytes):
-        return [f"{indent}{rel_path}: {total_lines} lines — OK."]
+        return [f"{indent}{rel_path}: {total_lines} lines — OK."], warnings
 
     # Separate leaf entries (point to ../) from sub-index pointers.
     leaves = [e for e in entries if e["path"].startswith("../")]
     sub_pointers = [e for e in entries if not e["path"].startswith("../")]
 
     if len(leaves) < MIN_GROUP_SIZE * 2:
-        return [f"{indent}{rel_path}: {total_lines} lines — "
-                f"only {len(leaves)} leaves, keeping flat."]
+        warnings.append(
+            f"{rel_path}: {total_lines} lines but only {len(leaves)} "
+            f"leaves — too few to split further"
+        )
+        return ([f"{indent}{rel_path}: {total_lines} lines — "
+                 f"only {len(leaves)} leaves, keeping flat."], warnings)
 
     actions.append(
         f"{indent}{rel_path}: {total_lines} lines — "
@@ -700,13 +716,14 @@ def rebalance_index(memory_dir, rel_path, max_lines, max_bytes,
             child_abs_rel = resolve_child_path(rel_path, entry["path"])
             child_full = os.path.join(memory_dir, child_abs_rel)
             if os.path.exists(child_full):
-                sub = rebalance_index(
+                sub_actions, sub_warns = rebalance_index(
                     memory_dir, child_abs_rel, max_lines,
                     max_bytes, dry_run, depth + 1
                 )
-                actions.extend(sub)
+                actions.extend(sub_actions)
+                warnings.extend(sub_warns)
 
-    return actions
+    return actions, warnings
 
 
 # ── Orphan detection ──────────────────────────────────────────────────
@@ -1137,30 +1154,51 @@ def main():
 
     prefix = "[DRY RUN] " if args.dry_run else ""
     exception_info = None
+    rebalancer_path = os.path.abspath(__file__)
     try:
-        actions = rebalance(memory_dir, max_lines, max_bytes,
-                            args.dry_run)
+        actions, warnings = rebalance(memory_dir, max_lines, max_bytes,
+                                      args.dry_run)
     except Exception:
         exception_info = traceback.format_exc()
         actions = [f"ERROR: rebalance failed: {exception_info}"]
+        warnings = []
 
     if exception_info:
-        # Rebalance crashed — collect anomalies for potential reporting.
+        # Rebalance crashed — tell Claude to investigate and report.
         anomalies = collect_anomalies(memory_dir, max_lines, max_bytes,
                                       hard_lines, hard_bytes)
         report = format_bug_report(anomalies, memory_dir, exception_info)
-        # Output as JSON so hooks can parse it.
         print(json.dumps({
             "systemMessage": (
-                f"Alzheimer rebalancer crashed. Run "
-                f"`python3 {os.path.abspath(__file__)} "
-                f"{memory_dir} --diagnose` for details, or "
-                f"`--report` to file a bug."
+                f"The alzheimer memory rebalancer crashed. "
+                f"Run `python3 {rebalancer_path} "
+                f"{memory_dir} --diagnose` to investigate, "
+                f"then tell the user what went wrong. If it looks "
+                f"like a bug, ask the user if they'd like you to "
+                f"file an issue by running `python3 {rebalancer_path} "
+                f"{memory_dir} --report`."
             ),
         }))
         sys.exit(1)
+
     for action in actions:
         print(f"{prefix}{action}")
+
+    if warnings:
+        # Unresolvable issues — tell Claude to inform the user.
+        warn_summary = "; ".join(warnings)
+        print(json.dumps({
+            "systemMessage": (
+                f"The alzheimer memory rebalancer completed but "
+                f"found issues it could not resolve: {warn_summary}. "
+                f"Run `python3 {rebalancer_path} "
+                f"{memory_dir} --diagnose` for a full report, "
+                f"then explain the situation to the user. If it "
+                f"looks like a bug, ask the user if they'd like "
+                f"you to file an issue by running "
+                f"`python3 {rebalancer_path} {memory_dir} --report`."
+            ),
+        }))
 
 
 if __name__ == "__main__":

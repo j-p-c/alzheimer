@@ -210,12 +210,12 @@ class TestRebalanceNoOp(unittest.TestCase):
                 ("F1", "f1.md", "first"),
                 ("F2", "f2.md", "second"),
             ])
-            actions = rebalance(d, max_lines=150)
+            actions, _ = rebalance(d, max_lines=150)
             self.assertTrue(any("no rebalancing" in a for a in actions))
 
     def test_missing_memory_md(self):
         with TestDir() as d:
-            actions = rebalance(d)
+            actions, _ = rebalance(d)
             self.assertTrue(any("not found" in a for a in actions))
 
 
@@ -236,7 +236,7 @@ class TestRebalanceLevel1(unittest.TestCase):
                 entries.append((f"Proj {i}", fname, f"project entry {i}"))
 
             make_index(d, entries)
-            actions = rebalance(d, max_lines=8)
+            actions, _ = rebalance(d, max_lines=8)
 
             # MEMORY.md should now have category pointers, not leaves.
             _, new_entries = parse_index(os.path.join(d, "MEMORY.md"))
@@ -263,7 +263,7 @@ class TestRebalanceLevel1(unittest.TestCase):
                 entries.append((f"Proj {i}", fname, f"project {i}"))
 
             make_index(d, entries)
-            actions = rebalance(d, max_lines=5)
+            actions, _ = rebalance(d, max_lines=5)
 
             _, new_entries = parse_index(os.path.join(d, "MEMORY.md"))
             # Feedback should still be flat (2 < MIN_GROUP_SIZE).
@@ -318,7 +318,7 @@ class TestRebalanceLevel2(unittest.TestCase):
             make_index(d, entries)
 
             # Use very low limits to force both levels to trigger.
-            actions = rebalance(d, max_lines=10)
+            actions, _ = rebalance(d, max_lines=10)
 
             # Level 1: MEMORY.md should have a category pointer.
             _, root_entries = parse_index(os.path.join(d, "MEMORY.md"))
@@ -424,7 +424,7 @@ class TestRebalanceLevel3(unittest.TestCase):
             #   level 0: MEMORY.md (60 entries -> 1 category pointer)
             #   level 1: _index/feedback.md (60 entries -> 2-3 topic groups)
             #   level 2: if groups are still large, split again
-            actions = rebalance(d, max_lines=10)
+            actions, _ = rebalance(d, max_lines=10)
 
             # Verify MEMORY.md is under limit.
             _, root = parse_index(os.path.join(d, "MEMORY.md"))
@@ -460,7 +460,7 @@ class TestByteSizeLimit(unittest.TestCase):
             size = file_size_bytes(mem_md)
 
             # Set byte limit below actual size, line limit high.
-            actions = rebalance(d, max_lines=200, max_bytes=size - 100)
+            actions, _ = rebalance(d, max_lines=200, max_bytes=size - 100)
 
             # Should have rebalanced despite being under line limit.
             self.assertTrue(any("rebalancing" in a for a in actions))
@@ -473,7 +473,7 @@ class TestByteSizeLimit(unittest.TestCase):
                 make_leaf(d, fname, "feedback", f"F{i}", "short")
                 entries.append((f"F{i}", fname, "short"))
             make_index(d, entries)
-            actions = rebalance(d, max_lines=200, max_bytes=50000)
+            actions, _ = rebalance(d, max_lines=200, max_bytes=50000)
             self.assertTrue(any("no rebalancing" in a for a in actions))
 
 
@@ -509,7 +509,7 @@ class TestAutoDreamRecovery(unittest.TestCase):
             make_index(d, entries)
 
             # Re-run rebalancer — it should rebuild the tree.
-            actions = rebalance(d, max_lines=8)
+            actions, _ = rebalance(d, max_lines=8)
             self.assertTrue(any("rebalancing" in a for a in actions))
 
             _, rebuilt = parse_index(os.path.join(d, "MEMORY.md"))
@@ -531,7 +531,7 @@ class TestAutoDreamRecovery(unittest.TestCase):
                         "- [Gone](../gone.md) — deleted\n")
 
             # Rebalance should work fine despite the stale index.
-            actions = rebalance(d, max_lines=150)
+            actions, _ = rebalance(d, max_lines=150)
             self.assertTrue(any("no rebalancing" in a for a in actions))
 
 
@@ -579,7 +579,7 @@ class TestDepthLimit(unittest.TestCase):
             make_index(d, entries)
 
             # Very low limit forces many splits.
-            actions = rebalance(d, max_lines=5)
+            actions, _ = rebalance(d, max_lines=5)
 
             # Check that max depth message appears if needed, and
             # importantly, that it terminates (no infinite loop).
@@ -591,7 +591,7 @@ class TestEdgeCases(unittest.TestCase):
     def test_empty_memory_dir(self):
         with TestDir() as d:
             # No MEMORY.md at all.
-            actions = rebalance(d)
+            actions, _ = rebalance(d)
             self.assertTrue(any("not found" in a for a in actions))
 
     def test_malformed_frontmatter(self):
@@ -602,7 +602,7 @@ class TestEdgeCases(unittest.TestCase):
                 f.write("---\nthis is not: valid: yaml: stuff\n---\n")
             make_index(d, [("Bad", "bad.md", "malformed")])
             # Should not crash.
-            actions = rebalance(d, max_lines=150)
+            actions, _ = rebalance(d, max_lines=150)
             self.assertIsInstance(actions, list)
 
     def test_unicode_in_entries(self):
@@ -613,7 +613,7 @@ class TestEdgeCases(unittest.TestCase):
                 ("Ünïcödé", "uni.md",
                  'handles em dashes \u2014 and smart quotes \u201clike this\u201d'),
             ])
-            actions = rebalance(d, max_lines=150)
+            actions, _ = rebalance(d, max_lines=150)
             self.assertTrue(any("no rebalancing" in a for a in actions))
 
     def test_concurrent_add_during_rebalance(self):
@@ -636,7 +636,7 @@ class TestEdgeCases(unittest.TestCase):
                 f.write("- [New](feedback_new.md) — new entry\n")
 
             # Second rebalance should handle this gracefully.
-            actions = rebalance(d, max_lines=5)
+            actions, _ = rebalance(d, max_lines=5)
             orphans = find_orphans(d)
             self.assertNotIn("feedback_new.md", orphans)
 
