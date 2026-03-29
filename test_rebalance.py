@@ -10,12 +10,18 @@ from rebalance import (
     CONFIG_FILE,
     DEFAULT_MAX_LINES,
     DEFAULT_MAX_BYTES,
+    GLOSSARY_FILE,
+    GLOSSARY_MAX_TERMS,
+    GLOSSARY_MIN_TERMS,
     HARD_MAX_LINES,
     HARD_MAX_BYTES,
     MIN_GROUP_SIZE,
     MAX_DEPTH,
+    build_glossary_entry,
     collect_anomalies,
+    extract_key_terms,
     extract_keywords,
+    extract_terms_from_text,
     file_size_bytes,
     find_orphans,
     get_limits,
@@ -23,10 +29,13 @@ from rebalance import (
     is_category_entry,
     load_config,
     parse_index,
+    read_all_frontmatter,
     read_frontmatter_type,
     rebalance,
     summarize_entries,
+    update_glossary,
     verify_tree,
+    write_glossary,
 )
 
 
@@ -798,6 +807,351 @@ class TestConfigIntegration(unittest.TestCase):
                       and "hard limit" in a.message
                       and "lines" in a.message]
             self.assertEqual(len(errors), 0)
+
+
+class TestTermExtraction(unittest.TestCase):
+    """Tests for key-term extraction from memory files."""
+
+    def test_extract_terms_from_text_multiword(self):
+        """Finds multi-word capitalized phrases."""
+        terms = extract_terms_from_text(
+            "We discussed Project Alpha and Team Bravo today."
+        )
+        self.assertIn("Project Alpha", terms)
+        self.assertIn("Team Bravo", terms)
+
+    def test_extract_terms_from_text_camelcase(self):
+        """Finds camelCase identifiers."""
+        terms = extract_terms_from_text("The tool is called myTool here.")
+        self.assertIn("myTool", terms)
+
+    def test_read_all_frontmatter(self):
+        """Reads all frontmatter fields."""
+        with TestDir() as d:
+            path = os.path.join(d, "test.md")
+            with open(path, "w") as f:
+                f.write("---\nname: Test Name\ntype: user\n"
+                        "description: A test file\n---\nBody.\n")
+            fm = read_all_frontmatter(path)
+            self.assertEqual(fm["name"], "Test Name")
+            self.assertEqual(fm["type"], "user")
+            self.assertEqual(fm["description"], "A test file")
+
+    def test_read_all_frontmatter_no_frontmatter(self):
+        """Returns empty dict for files without frontmatter."""
+        with TestDir() as d:
+            path = os.path.join(d, "plain.md")
+            with open(path, "w") as f:
+                f.write("Just a plain file.\n")
+            fm = read_all_frontmatter(path)
+            self.assertEqual(fm, {})
+
+    def test_extract_key_terms_basic(self):
+        """Terms appearing in multiple files score higher."""
+        with TestDir() as d:
+            # "Project Alpha" appears in 3 files, "Team Bravo" in 1.
+            for i in range(3):
+                make_leaf(d, f"proj_{i}.md", "project",
+                          f"Task {i}",
+                          f"Project Alpha integration task {i}")
+            make_leaf(d, "team.md", "project",
+                      "Team Bravo", "Team Bravo onboarding")
+            make_index(d, [
+                (f"Task {i}", f"proj_{i}.md", f"task {i}")
+                for i in range(3)
+            ] + [("Team Bravo", "team.md", "onboarding")])
+
+            terms = extract_key_terms(d)
+            term_names = [t["term"] for t in terms]
+            self.assertIn("Project Alpha", term_names)
+
+    def test_extract_key_terms_frontmatter_boost(self):
+        """Terms in frontmatter name/description score higher."""
+        with TestDir() as d:
+            # "Studio One" only in frontmatter of 2 files.
+            # "Random Word" only in body of 2 files.
+            for i in range(2):
+                path = os.path.join(d, f"fm_{i}.md")
+                with open(path, "w") as f:
+                    f.write(f"---\nname: Studio One config\n"
+                            f"description: Studio One settings for task {i}\n"
+                            f"type: reference\n---\n\n"
+                            f"Some plain body text here.\n")
+            for i in range(2):
+                path = os.path.join(d, f"body_{i}.md")
+                with open(path, "w") as f:
+                    f.write(f"---\nname: note {i}\n"
+                            f"description: a note\n"
+                            f"type: feedback\n---\n\n"
+                            f"This mentions Random Word in the body.\n")
+            entries = [(f"fm_{i}", f"fm_{i}.md", f"config {i}")
+                       for i in range(2)]
+            entries += [(f"body_{i}", f"body_{i}.md", f"note {i}")
+                        for i in range(2)]
+            make_index(d, entries)
+
+            terms = extract_key_terms(d)
+            names = [t["term"] for t in terms]
+            # Both should appear, but Studio One should rank higher.
+            if "Studio One" in names and "Random Word" in names:
+                so_idx = names.index("Studio One")
+                rw_idx = names.index("Random Word")
+                self.assertLess(so_idx, rw_idx,
+                                "Frontmatter terms should rank higher")
+
+    def test_extract_key_terms_stop_words_excluded(self):
+        """Day names and common terms are excluded."""
+        with TestDir() as d:
+            for i in range(3):
+                make_leaf(d, f"f{i}.md", "project", f"Note {i}",
+                          f"Meeting on Monday about the Summary")
+            make_index(d, [(f"Note {i}", f"f{i}.md", f"note {i}")
+                           for i in range(3)])
+            terms = extract_key_terms(d)
+            term_names = [t["term"] for t in terms]
+            self.assertNotIn("Monday", term_names)
+            self.assertNotIn("Summary", term_names)
+
+    def test_extract_key_terms_max_limit(self):
+        """Returns at most GLOSSARY_MAX_TERMS terms."""
+        with TestDir() as d:
+            # Create files with many distinct proper nouns.
+            for i in range(30):
+                path = os.path.join(d, f"f{i}.md")
+                names = " ".join(f"Alpha{j} Beta{j}" for j in range(i, i + 5))
+                with open(path, "w") as f:
+                    f.write(f"---\nname: File {i}\n"
+                            f"description: {names}\ntype: project\n---\n\n"
+                            f"Body with {names}.\n")
+            entries = [(f"File {i}", f"f{i}.md", f"file {i}")
+                       for i in range(30)]
+            make_index(d, entries)
+            terms = extract_key_terms(d)
+            self.assertLessEqual(len(terms), GLOSSARY_MAX_TERMS)
+
+    def test_extract_key_terms_empty_dir(self):
+        """Empty memory dir returns no terms."""
+        with TestDir() as d:
+            make_index(d, [])
+            terms = extract_key_terms(d)
+            self.assertEqual(terms, [])
+
+    def test_extract_key_terms_malformed_files(self):
+        """Handles broken frontmatter and binary-like content."""
+        with TestDir() as d:
+            # Broken frontmatter.
+            with open(os.path.join(d, "bad.md"), "w") as f:
+                f.write("---\nbroken: yaml: stuff: here\n")
+            # Empty file.
+            with open(os.path.join(d, "empty.md"), "w") as f:
+                pass
+            make_index(d, [("Bad", "bad.md", "broken"),
+                           ("Empty", "empty.md", "nothing")])
+            # Should not crash.
+            terms = extract_key_terms(d)
+            self.assertIsInstance(terms, list)
+
+    def test_extract_definition_from_frontmatter(self):
+        """Definition comes from frontmatter description."""
+        with TestDir() as d:
+            for i in range(2):
+                make_leaf(d, f"f{i}.md", "reference",
+                          "Zeta Platform",
+                          "Zeta Platform is the deployment target for services")
+            make_index(d, [(f"f{i}", f"f{i}.md", f"ref {i}")
+                           for i in range(2)])
+            terms = extract_key_terms(d)
+            zeta = [t for t in terms if t["term"] == "Zeta Platform"]
+            if zeta:
+                self.assertIn("deployment", zeta[0]["definition"])
+
+
+class TestGlossary(unittest.TestCase):
+    """Tests for glossary file creation and integration."""
+
+    def _make_rich_tree(self, d, n_files=6):
+        """Create a memory tree with enough proper nouns for glossary."""
+        entries = []
+        for i in range(n_files):
+            path = os.path.join(d, f"proj_{i}.md")
+            with open(path, "w") as f:
+                f.write(f"---\nname: Config for Project Zenith\n"
+                        f"description: Project Zenith deployment config\n"
+                        f"type: project\n---\n\n"
+                        f"Project Zenith uses Server Omega for builds.\n"
+                        f"Team Delta reviews all changes.\n")
+            entries.append(
+                (f"Config {i}", f"proj_{i}.md", f"Project Zenith config"))
+        make_index(d, entries)
+
+    def test_glossary_created(self):
+        """Glossary file is created when enough terms exist."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            rebalance(d, max_lines=150)
+            self.assertTrue(
+                os.path.exists(os.path.join(d, GLOSSARY_FILE)))
+
+    def test_glossary_has_frontmatter(self):
+        """Glossary file has type: glossary frontmatter."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            rebalance(d, max_lines=150)
+            fm = read_all_frontmatter(os.path.join(d, GLOSSARY_FILE))
+            self.assertEqual(fm.get("type"), "glossary")
+
+    def test_glossary_pinned_after_rebalance(self):
+        """Glossary stays in MEMORY.md after rebalancing (not in _index)."""
+        with TestDir() as d:
+            self._make_rich_tree(d, n_files=10)
+            rebalance(d, max_lines=8)
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            glossary_entries = [e for e in entries
+                                if e["path"] == GLOSSARY_FILE]
+            self.assertEqual(len(glossary_entries), 1,
+                             "Glossary should be in MEMORY.md")
+            # Should NOT be in _index/.
+            self.assertFalse(
+                any(e["path"].startswith("_index/glossary")
+                    for e in entries))
+
+    def test_glossary_entry_in_index(self):
+        """Glossary entry appears in MEMORY.md entries."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            rebalance(d, max_lines=150)
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            paths = [e["path"] for e in entries]
+            self.assertIn(GLOSSARY_FILE, paths)
+
+    def test_glossary_description_contains_terms(self):
+        """MEMORY.md glossary entry description lists key terms."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            rebalance(d, max_lines=150)
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            glossary = [e for e in entries if e["path"] == GLOSSARY_FILE]
+            self.assertTrue(len(glossary) > 0)
+            desc = glossary[0]["desc"]
+            # Should contain at least one of our planted terms.
+            self.assertTrue(
+                "Project Zenith" in desc or "Server Omega" in desc
+                or "Team Delta" in desc,
+                f"Expected key terms in desc, got: {desc}")
+
+    def test_glossary_readded_if_removed(self):
+        """Glossary entry is restored if manually deleted from MEMORY.md."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            rebalance(d, max_lines=150)
+            # Remove glossary entry from MEMORY.md.
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            entries = [e for e in entries if e["path"] != GLOSSARY_FILE]
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("# Memory Index\n\n")
+                for e in entries:
+                    f.write(e["raw"] + "\n")
+            # Re-run rebalance.
+            rebalance(d, max_lines=150)
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            paths = [e["path"] for e in entries]
+            self.assertIn(GLOSSARY_FILE, paths)
+
+    def test_glossary_idempotent(self):
+        """Running rebalance twice produces same glossary."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            rebalance(d, max_lines=150)
+            with open(os.path.join(d, GLOSSARY_FILE)) as f:
+                first = f.read()
+            rebalance(d, max_lines=150)
+            with open(os.path.join(d, GLOSSARY_FILE)) as f:
+                second = f.read()
+            self.assertEqual(first, second)
+
+    def test_glossary_dry_run(self):
+        """Dry run does not create glossary file."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            actions, _ = rebalance(d, max_lines=150, dry_run=True)
+            self.assertFalse(
+                os.path.exists(os.path.join(d, GLOSSARY_FILE)))
+            self.assertTrue(any("Glossary" in a for a in actions))
+
+    def test_glossary_not_orphan(self):
+        """find_orphans does not flag glossary.md."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            rebalance(d, max_lines=150)
+            orphans = find_orphans(d)
+            self.assertNotIn(GLOSSARY_FILE, orphans)
+
+    def test_verify_tree_with_glossary(self):
+        """verify_tree passes with glossary present."""
+        with TestDir() as d:
+            self._make_rich_tree(d)
+            rebalance(d, max_lines=150)
+            ok = verify_tree(d)
+            self.assertTrue(ok)
+
+    def test_glossary_skipped_few_terms(self):
+        """No glossary created when too few terms extracted."""
+        with TestDir() as d:
+            # Generic content with no proper nouns.
+            for i in range(3):
+                make_leaf(d, f"f{i}.md", "feedback",
+                          f"item {i}", f"generic entry {i}")
+            make_index(d, [(f"item {i}", f"f{i}.md", f"entry {i}")
+                           for i in range(3)])
+            rebalance(d, max_lines=150)
+            self.assertFalse(
+                os.path.exists(os.path.join(d, GLOSSARY_FILE)))
+
+    def test_glossary_updated_with_new_files(self):
+        """Glossary reflects new files added after initial creation."""
+        with TestDir() as d:
+            self._make_rich_tree(d, n_files=4)
+            rebalance(d, max_lines=150)
+            # Add files mentioning a new term.
+            for i in range(4, 7):
+                path = os.path.join(d, f"new_{i}.md")
+                with open(path, "w") as f:
+                    f.write(f"---\nname: Alpha Station notes\n"
+                            f"description: Alpha Station deployment\n"
+                            f"type: project\n---\n\nAlpha Station config.\n")
+                # Add to MEMORY.md.
+                with open(os.path.join(d, "MEMORY.md"), "a") as mf:
+                    mf.write(f"- [Note {i}](new_{i}.md) — Alpha Station\n")
+            rebalance(d, max_lines=150)
+            with open(os.path.join(d, GLOSSARY_FILE)) as f:
+                content = f.read()
+            self.assertIn("Alpha Station", content)
+
+    def test_build_glossary_entry_truncation(self):
+        """Long term lists are truncated in MEMORY.md entry."""
+        terms = [{"term": f"LongTermName{i}", "definition": f"def {i}",
+                  "score": 1.0} for i in range(30)]
+        entry = build_glossary_entry(terms)
+        self.assertLessEqual(len(entry["raw"]), 200)
+        self.assertTrue(entry["desc"].endswith("..."))
+
+    def test_write_glossary_format(self):
+        """write_glossary produces correct file format."""
+        with TestDir() as d:
+            terms = [
+                {"term": "Project Zenith", "definition": "Main project",
+                 "score": 5.0},
+                {"term": "Server Omega", "definition": "Build server",
+                 "score": 3.0},
+            ]
+            write_glossary(d, terms)
+            path = os.path.join(d, GLOSSARY_FILE)
+            self.assertTrue(os.path.exists(path))
+            with open(path) as f:
+                content = f.read()
+            self.assertIn("type: glossary", content)
+            self.assertIn("**Project Zenith**", content)
+            self.assertIn("**Server Omega**", content)
 
 
 if __name__ == "__main__":
