@@ -9,8 +9,10 @@ Usage:
     python3 setup.py --check      # Verify hooks are installed correctly
 """
 
+import glob
 import json
 import os
+import re
 import sys
 
 
@@ -172,7 +174,6 @@ def find_install_dir(settings_path):
                     cmd = hook.get("command", "")
                     # Look for python3 "/.../rebalance.py" or
                     # python3 /.../rebalance.py in the command.
-                    import re
                     m = re.search(r'python3\s+"?([^"]+/rebalance\.py)"?',
                                   cmd)
                     if m:
@@ -182,6 +183,88 @@ def find_install_dir(settings_path):
     except (json.JSONDecodeError, KeyError):
         pass
     return None
+
+
+def seed_memory(memory_dir, alzheimer_dir):
+    """Write a reference memory file so Claude knows what 'alzheimer' is.
+
+    This survives compaction, ensuring the instance always recognises
+    the name even long after the install conversation is gone.
+    """
+    memory_file = os.path.join(memory_dir, "reference_alzheimer.md")
+    memory_md = os.path.join(memory_dir, "MEMORY.md")
+
+    # Read version from rebalance.py.
+    version = "unknown"
+    rpy = os.path.join(alzheimer_dir, "rebalance.py")
+    if os.path.exists(rpy):
+        with open(rpy) as f:
+            for line in f:
+                m = re.match(r'^VERSION\s*=\s*"(.+)"', line)
+                if m:
+                    version = m.group(1)
+                    break
+
+    content = f"""---
+name: Alzheimer memory rebalancer
+description: "alzheimer" is the auto-memory rebalancer installed from github.com/j-p-c/alzheimer — how to update, diagnose, and report bugs
+type: reference
+---
+
+**alzheimer** (v{version}) — self-balancing hierarchical memory tree for Claude Code.
+Installed at: `{alzheimer_dir}`
+GitHub repo: https://github.com/j-p-c/alzheimer
+
+**Common commands** (run from any directory):
+- Update to latest: `python3 "{alzheimer_dir}/setup.py" --update`
+- Check hooks are correct: `python3 "{alzheimer_dir}/setup.py" --check`
+- Diagnose issues: `python3 "{alzheimer_dir}/rebalance.py" <memory_dir> --diagnose`
+- Find install location: `python3 "{alzheimer_dir}/setup.py" --find`
+
+When the user says "update alzheimer" they mean: pull latest from GitHub and re-install hooks (i.e. run setup.py --update).
+"""
+
+    with open(memory_file, "w") as f:
+        f.write(content)
+
+    # Add or update the MEMORY.md index entry.
+    index_line = ("- [Alzheimer memory rebalancer](reference_alzheimer.md) "
+                  "— installed from github.com/j-p-c/alzheimer; "
+                  "update, diagnose, report bugs")
+
+    if os.path.exists(memory_md):
+        with open(memory_md) as f:
+            lines = f.read()
+
+        if "reference_alzheimer.md" in lines:
+            # Replace existing entry.
+            lines = re.sub(
+                r'^- \[.*\]\(reference_alzheimer\.md\).*$',
+                index_line, lines, flags=re.MULTILINE
+            )
+        else:
+            # Append entry.
+            lines = lines.rstrip("\n") + "\n" + index_line + "\n"
+
+        with open(memory_md, "w") as f:
+            f.write(lines)
+    # If no MEMORY.md exists, don't create one — rebalance.py handles that.
+
+
+def seed_all_memory_dirs(alzheimer_dir):
+    """Seed reference memory into every project memory directory."""
+    memory_dirs = glob.glob(os.path.expanduser(
+        "~/.claude/projects/*/memory"
+    ))
+    seeded = 0
+    for d in memory_dirs:
+        if os.path.exists(os.path.join(d, "MEMORY.md")):
+            seed_memory(d, alzheimer_dir)
+            seeded += 1
+            print(f"  Seeded memory: {d}")
+    if seeded == 0:
+        print("  No memory directories found to seed.")
+    return seeded
 
 
 def do_update(settings_path):
@@ -215,6 +298,11 @@ def do_update(settings_path):
     hooks = generate_hooks(rebalancer_path)
     install_hooks(settings_path, hooks)
     print(f"  Hooks updated in {settings_path}")
+    print()
+
+    # Seed reference memory.
+    print("Seeding alzheimer reference memory:")
+    seed_all_memory_dirs(alzheimer_dir)
     print()
 
     # Verify.
@@ -278,8 +366,11 @@ def main():
         print("\nVerifying hooks:")
         check_hooks(args.settings, rebalancer_path)
 
+        # Seed reference memory so Claude knows what "alzheimer" is.
+        print("\nSeeding alzheimer reference memory:")
+        seed_all_memory_dirs(os.path.dirname(os.path.abspath(__file__)))
+
         # Run initial rebalance + verify on all memory directories.
-        import glob
         from rebalance import rebalance as do_rebalance, verify_tree
         memory_dirs = glob.glob(os.path.expanduser(
             "~/.claude/projects/*/memory"
