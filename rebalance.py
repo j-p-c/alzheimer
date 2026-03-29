@@ -1088,6 +1088,10 @@ def main():
         help="Collect anomalies and file a GitHub issue (requires gh CLI).",
     )
     parser.add_argument(
+        "--hook", action="store_true",
+        help="Output a brief JSON systemMessage (for use from hooks).",
+    )
+    parser.add_argument(
         "--version", action="version",
         version=f"alzheimer {VERSION}",
     )
@@ -1181,24 +1185,68 @@ def main():
         }))
         sys.exit(1)
 
-    for action in actions:
-        print(f"{prefix}{action}")
+    if args.hook:
+        # Build a brief summary for the user's UI.
+        memory_md = os.path.join(memory_dir, "MEMORY.md")
+        if os.path.exists(memory_md):
+            line_count = sum(1 for _ in open(memory_md))
+            byte_count = os.path.getsize(memory_md)
+            kb = f"{byte_count / 1024:.0f}"
 
-    if warnings:
-        # Unresolvable issues — tell Claude to inform the user.
-        warn_summary = "; ".join(warnings)
-        print(json.dumps({
-            "systemMessage": (
-                f"The alzheimer memory rebalancer completed but "
-                f"found issues it could not resolve: {warn_summary}. "
-                f"Run `python3 {rebalancer_path} "
-                f"{memory_dir} --diagnose` for a full report, "
-                f"then explain the situation to the user. If it "
-                f"looks like a bug, ask the user if they'd like "
-                f"you to file an issue by running "
-                f"`python3 {rebalancer_path} {memory_dir} --report`."
-            ),
-        }))
+            # Count how many actions were real work (not just status).
+            work = [a for a in actions if "rebalancing" not in a.lower()
+                    or "rebalancing..." in a.lower()]
+            rebalanced = any("rebalancing..." in a for a in actions)
+
+            if warnings:
+                warn_summary = "; ".join(warnings)
+                summary = (f"alzheimer: {line_count}/{max_lines} lines, "
+                           f"{kb}/{max_bytes // 1024} KB — "
+                           f"warnings: {warn_summary}")
+            elif rebalanced:
+                summary = (f"alzheimer: rebalanced to "
+                           f"{line_count}/{max_lines} lines, "
+                           f"{kb}/{max_bytes // 1024} KB")
+            else:
+                summary = (f"alzheimer: {line_count}/{max_lines} lines, "
+                           f"{kb}/{max_bytes // 1024} KB — balanced")
+
+        else:
+            summary = "alzheimer: no MEMORY.md found"
+
+        print(json.dumps({"systemMessage": summary}))
+
+        if warnings:
+            # Also emit the detailed warning for Claude's context.
+            warn_summary = "; ".join(warnings)
+            print(json.dumps({
+                "systemMessage": (
+                    f"The alzheimer memory rebalancer completed but "
+                    f"found issues it could not resolve: {warn_summary}. "
+                    f"Run `python3 {rebalancer_path} "
+                    f"{memory_dir} --diagnose` for a full report, "
+                    f"then explain the situation to the user."
+                ),
+            }))
+    else:
+        for action in actions:
+            print(f"{prefix}{action}")
+
+        if warnings:
+            # Unresolvable issues — tell Claude to inform the user.
+            warn_summary = "; ".join(warnings)
+            print(json.dumps({
+                "systemMessage": (
+                    f"The alzheimer memory rebalancer completed but "
+                    f"found issues it could not resolve: {warn_summary}. "
+                    f"Run `python3 {rebalancer_path} "
+                    f"{memory_dir} --diagnose` for a full report, "
+                    f"then explain the situation to the user. If it "
+                    f"looks like a bug, ask the user if they'd like "
+                    f"you to file an issue by running "
+                    f"`python3 {rebalancer_path} {memory_dir} --report`."
+                ),
+            }))
 
 
 if __name__ == "__main__":
