@@ -1121,5 +1121,101 @@ class TestEarlyRebalance(unittest.TestCase):
                 any("no rebalancing" in a.lower() for a in actions))
 
 
+class TestHookCLIOutput(unittest.TestCase):
+    """Test --hook CLI output format (single JSON object)."""
+
+    def _make_tree(self, d):
+        """Create a minimal memory tree for hook testing."""
+        make_leaf(d, "user_ctx.md", "user", "User context", "physicist")
+        make_leaf(d, "feedback_x.md", "feedback", "FB X", "do X")
+        make_leaf(d, "project_y.md", "project", "Project Y", "build Y")
+        make_index(d, [
+            ("User context", "user_ctx.md", "physicist"),
+            ("FB X", "feedback_x.md", "do X"),
+            ("Project Y", "project_y.md", "build Y"),
+        ])
+
+    def _run_hook(self, d, extra_args=None):
+        """Run rebalance.py --hook via subprocess, return parsed JSON."""
+        import json
+        import subprocess
+        cmd = [
+            "python3", os.path.join(os.path.dirname(__file__), "rebalance.py"),
+            "--hook",
+        ]
+        if extra_args:
+            cmd.extend(extra_args)
+        cmd.append(d)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
+        return lines, result
+
+    def test_hook_emits_single_json_line(self):
+        """Hook mode must emit exactly one JSON line."""
+        with TestDir() as d:
+            self._make_tree(d)
+            lines, _ = self._run_hook(d)
+            self.assertEqual(len(lines), 1,
+                             f"Expected 1 line, got {len(lines)}: {lines}")
+
+    def test_hook_output_has_system_message(self):
+        """Hook output must contain systemMessage with status."""
+        import json
+        with TestDir() as d:
+            self._make_tree(d)
+            lines, _ = self._run_hook(d)
+            obj = json.loads(lines[0])
+            self.assertIn("systemMessage", obj)
+            self.assertIn("alzheimer:", obj["systemMessage"])
+
+    def test_hook_glossary_in_additional_context(self):
+        """When glossary is stale, prompt goes in additionalContext."""
+        import json
+        with TestDir() as d:
+            self._make_tree(d)
+            # No glossary file = stale
+            lines, _ = self._run_hook(d)
+            obj = json.loads(lines[0])
+            self.assertIn("hookSpecificOutput", obj)
+            self.assertIn("additionalContext",
+                          obj["hookSpecificOutput"])
+            self.assertIn("GLOSSARY UPDATE NEEDED",
+                          obj["hookSpecificOutput"]["additionalContext"])
+
+    def test_hook_event_name_passed_through(self):
+        """--hook-event value appears in hookSpecificOutput."""
+        import json
+        with TestDir() as d:
+            self._make_tree(d)
+            lines, _ = self._run_hook(d,
+                                      ["--hook-event", "SessionStart"])
+            obj = json.loads(lines[0])
+            self.assertEqual(
+                obj["hookSpecificOutput"]["hookEventName"],
+                "SessionStart")
+
+    def test_hook_no_additional_context_when_fresh(self):
+        """When glossary is fresh and no warnings, no hookSpecificOutput."""
+        import json
+        with TestDir() as d:
+            self._make_tree(d)
+            # Create a fresh glossary.
+            terms = [("Term1", "def1"), ("Term2", "def2"),
+                     ("Term3", "def3")]
+            gpath = os.path.join(d, GLOSSARY_FILE)
+            with open(gpath, "w") as f:
+                f.write("---\ntype: glossary\nupdated: 2026-03-30\n"
+                        "terms: 3\n---\n\n# Key Terms\n\n")
+                for name, defn in terms:
+                    f.write(f"- **{name}** — {defn}\n")
+            # Touch glossary to be newer than all memory files.
+            import time
+            time.sleep(0.05)
+            os.utime(gpath, None)
+            lines, _ = self._run_hook(d)
+            obj = json.loads(lines[0])
+            self.assertNotIn("hookSpecificOutput", obj)
+
+
 if __name__ == "__main__":
     unittest.main()

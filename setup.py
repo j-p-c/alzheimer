@@ -36,7 +36,7 @@ def generate_hooks(rebalancer_path):
                     f"jq -r '(.tool_input.file_path // "
                     f".tool_response.filePath) // empty' | "
                     f'{{ read -r f; echo "$f" | grep -q \'/memory/\' '
-                    f"&& python3 \"{rp}\" --hook "
+                    f"&& python3 \"{rp}\" --hook --hook-event PostToolUse "
                     f'"$(dirname "$f")" 2>&1 | head -5; }} || true'
                 ),
                 "timeout": 15,
@@ -49,7 +49,7 @@ def generate_hooks(rebalancer_path):
                 "command": (
                     f'for d in ~/.claude/projects/*/memory; do '
                     f'[ -f "$d/MEMORY.md" ] && '
-                    f'python3 "{rp}" --hook "$d" 2>&1; done || true'
+                    f'python3 "{rp}" --hook --hook-event SessionStart "$d" 2>&1; done || true'
                 ),
                 "timeout": 15,
                 "statusMessage": "Rebalancing memory tree..."
@@ -61,7 +61,7 @@ def generate_hooks(rebalancer_path):
                 "command": (
                     f'for d in ~/.claude/projects/*/memory; do '
                     f'[ -f "$d/MEMORY.md" ] && '
-                    f'python3 "{rp}" --hook "$d" 2>&1; done || true'
+                    f'python3 "{rp}" --hook --hook-event PreCompact "$d" 2>&1; done || true'
                 ),
                 "timeout": 15,
                 "statusMessage": "Rebalancing memory tree before compact..."

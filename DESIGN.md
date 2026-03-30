@@ -235,18 +235,33 @@ MEMORY.md past the limit.
 
 ## Hook Mode (--hook)
 
-When invoked with `--hook`, the rebalancer produces JSON `systemMessage`
-output instead of plain text. Each message is a separate JSON object on
-its own line:
+When invoked with `--hook`, the rebalancer produces a single JSON object
+on stdout. The optional `--hook-event` flag specifies which Claude Code
+hook triggered the invocation (SessionStart, PostToolUse, PreCompact).
 
 ```json
-{"systemMessage": "alzheimer: 27/150 lines, 3/20 KB — balanced."}
+{"systemMessage": "alzheimer: 27/150 lines, 3/20 KB — balanced"}
 ```
 
-This is how the rebalancer communicates with Claude:
-- **Status**: line count, byte count, whether rebalancing was needed
-- **Glossary updates**: instructions for Claude to rewrite glossary.md
-- **Warnings**: unresolvable issues (suggests running `--diagnose`)
+The `systemMessage` field is displayed to the user in the Claude Code UI.
+When the rebalancer has additional context for Claude (glossary update
+instructions, warning details), it uses `hookSpecificOutput.additionalContext`
+— this reaches Claude's context without cluttering the user's terminal:
+
+```json
+{
+  "systemMessage": "alzheimer: 27/150 lines, 3/20 KB — balanced",
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "GLOSSARY UPDATE NEEDED: ..."
+  }
+}
+```
+
+This is how the rebalancer communicates:
+- **Status** (user-visible via `systemMessage`): line count, byte count, whether rebalancing was needed
+- **Glossary updates** (Claude-only via `additionalContext`): instructions to rewrite glossary.md
+- **Warnings** (Claude-only via `additionalContext`): unresolvable issues (suggests running `--diagnose`)
 
 Without `--hook`, output is plain text suitable for manual use.
 

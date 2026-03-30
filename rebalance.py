@@ -1296,6 +1296,10 @@ def main():
         help="Output a brief JSON systemMessage (for use from hooks).",
     )
     parser.add_argument(
+        "--hook-event", default=None,
+        help="Hook event name (SessionStart, PostToolUse, PreCompact).",
+    )
+    parser.add_argument(
         "--version", action="version",
         version=f"alzheimer {VERSION}",
     )
@@ -1420,24 +1424,27 @@ def main():
         else:
             summary = "alzheimer: no MEMORY.md found"
 
-        print(json.dumps({"systemMessage": summary}))
+        # Build single JSON output: systemMessage for user's UI,
+        # hookSpecificOutput.additionalContext for Claude's context.
+        output = {"systemMessage": summary}
 
-        # Emit glossary systemMessages (e.g. "please update glossary").
-        for msg in messages:
-            print(json.dumps({"systemMessage": msg}))
-
+        additional = list(messages)
         if warnings:
-            # Also emit the detailed warning for Claude's context.
             warn_summary = "; ".join(warnings)
-            print(json.dumps({
-                "systemMessage": (
-                    f"The alzheimer memory rebalancer completed but "
-                    f"found issues it could not resolve: {warn_summary}. "
-                    f"Run `python3 {rebalancer_path} "
-                    f"{memory_dir} --diagnose` for a full report, "
-                    f"then explain the situation to the user."
-                ),
-            }))
+            additional.append(
+                f"The alzheimer memory rebalancer completed but "
+                f"found issues it could not resolve: {warn_summary}. "
+                f"Run `python3 {rebalancer_path} "
+                f"{memory_dir} --diagnose` for a full report, "
+                f"then explain the situation to the user."
+            )
+        if additional:
+            hso = {"additionalContext": "\n\n".join(additional)}
+            if args.hook_event:
+                hso["hookEventName"] = args.hook_event
+            output["hookSpecificOutput"] = hso
+
+        print(json.dumps(output))
     else:
         for action in actions:
             print(f"{prefix}{action}")
