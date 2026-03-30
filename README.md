@@ -35,6 +35,25 @@ When MEMORY.md grows past the limit:
 4. If a category index overflows, entries are split by topic keyword
 5. This repeats recursively — the tree grows in depth, not width
 
+### Key terms glossary
+
+Important terms (proper nouns, project names, people) tend to get lost
+after Claude Code compaction. Alzheimer maintains a **glossary** of key
+terms that stays pinned at the top of MEMORY.md.
+
+The glossary uses `type: glossary` frontmatter (a unique type that the
+rebalancer never moves to `_index/`). When the rebalancer detects the
+glossary is stale (missing or older than any memory file), it emits a
+`systemMessage` instructing Claude to read all memory files and rewrite
+`glossary.md` with 10-20 key terms and one-line definitions. Claude
+writes the glossary — not Python regexes.
+
+### Early rebalancing
+
+Young memory trees (no `_index/` directory yet) trigger rebalancing at
+50% of the normal threshold. This prevents a burst of new memories from
+overflowing before the first rebalance.
+
 ## Installation
 
 You're running Claude Code — just tell Claude:
@@ -55,6 +74,9 @@ models (Opus, Sonnet, Haiku).
 2. Run `python3 setup.py --install` (merges hooks into your
    `~/.claude/settings.json` without disturbing existing settings,
    then rebalances and verifies all existing memory directories)
+3. Seed a reference memory (`reference_alzheimer.md`) into each project
+   memory directory so every Claude instance knows what "alzheimer" means
+   and how to update, diagnose, and report bugs
 
 After that, the hooks fire automatically on every memory write, session
 start, and compaction. No further configuration needed.
@@ -101,12 +123,20 @@ python3 rebalance.py ~/.claude/projects/*/memory/ --verify
 # Custom limits
 python3 rebalance.py /path/to/memory/ --max-lines 100 --max-bytes 15000
 
+# Hook mode (JSON systemMessage output, used by hooks)
+python3 rebalance.py ~/.claude/projects/*/memory/ --hook
+
 # Diagnose issues (structured report, no file changes)
 python3 rebalance.py ~/.claude/projects/*/memory/ --diagnose
 
 # File a bug report as a GitHub issue (requires gh CLI)
 python3 rebalance.py ~/.claude/projects/*/memory/ --report
 ```
+
+The `--hook` flag produces JSON `systemMessage` output that Claude sees
+as context. This is how the rebalancer communicates status (e.g.
+"27/150 lines, 3/20 KB — balanced") and glossary update requests to
+Claude without interrupting the conversation.
 
 ### Automatic (recommended)
 
@@ -132,7 +162,7 @@ Or add hooks manually to `~/.claude/settings.json`:
       "matcher": "Write|Edit",
       "hooks": [{
         "type": "command",
-        "command": "jq -r '(.tool_input.file_path // .tool_response.filePath) // empty' | { read -r f; echo \"$f\" | grep -q '/memory/' && python3 /path/to/rebalance.py \"$(dirname \"$f\")\" 2>&1 | head -5; } || true",
+        "command": "jq -r '(.tool_input.file_path // .tool_response.filePath) // empty' | { read -r f; echo \"$f\" | grep -q '/memory/' && python3 /path/to/rebalance.py \"$(dirname \"$f\")\" --hook 2>&1 | head -5; } || true",
         "timeout": 15,
         "statusMessage": "Checking memory balance..."
       }]
@@ -140,7 +170,7 @@ Or add hooks manually to `~/.claude/settings.json`:
     "SessionStart": [{
       "hooks": [{
         "type": "command",
-        "command": "for d in ~/.claude/projects/*/memory; do [ -f \"$d/MEMORY.md\" ] && python3 /path/to/rebalance.py \"$d\" 2>&1; done || true",
+        "command": "for d in ~/.claude/projects/*/memory; do [ -f \"$d/MEMORY.md\" ] && python3 /path/to/rebalance.py \"$d\" --hook 2>&1; done || true",
         "timeout": 15,
         "statusMessage": "Rebalancing memory tree..."
       }]
@@ -148,7 +178,7 @@ Or add hooks manually to `~/.claude/settings.json`:
     "PreCompact": [{
       "hooks": [{
         "type": "command",
-        "command": "for d in ~/.claude/projects/*/memory; do [ -f \"$d/MEMORY.md\" ] && python3 /path/to/rebalance.py \"$d\" 2>&1; done || true",
+        "command": "for d in ~/.claude/projects/*/memory; do [ -f \"$d/MEMORY.md\" ] && python3 /path/to/rebalance.py \"$d\" --hook 2>&1; done || true",
         "timeout": 15,
         "statusMessage": "Rebalancing memory tree before compact..."
       }]
@@ -213,7 +243,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-50 tests covering:
+74 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
@@ -229,6 +259,8 @@ python3 -m unittest test_rebalance -v
 - Idempotency
 - Config file loading (.alzheimer.conf)
 - Limit resolution priority (CLI > config > defaults)
+- Glossary integration (staleness detection, parsing, pinning, systemMessage)
+- Early rebalancing (young tree threshold)
 
 ## License
 

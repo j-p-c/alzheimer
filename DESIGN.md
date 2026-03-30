@@ -166,6 +166,104 @@ With 150-line indices and 3-entry minimum groups:
 
 Depth 2 should suffice for any realistic Claude Code project.
 
+## Key Terms Glossary
+
+Important terms (proper nouns, project names, people) get lost after
+Claude Code conversation compaction because the rebalancer treats all
+memory entries equally. The glossary fixes this by maintaining a pinned
+summary of key terms at the top of MEMORY.md.
+
+### How it works
+
+A `glossary.md` file uses `type: glossary` in its frontmatter — a type
+that is NOT in the rebalancer's `CATEGORY_LABELS`, so it is never pushed
+into `_index/`. It stays pinned in the root MEMORY.md.
+
+```markdown
+---
+type: glossary
+updated: 2026-03-29
+terms: 15
+---
+
+# Key Terms
+
+- **Project Alpha** — the main deployment target for billing services
+- **Server Omega** — CI/CD build server in the staging environment
+```
+
+The MEMORY.md entry lists the terms inline for visibility even without
+opening the file:
+
+```markdown
+- [Key Terms](glossary.md) — Project Alpha, Server Omega, Team Delta, ...
+```
+
+### Generation
+
+The glossary is **written by Claude, not by Python code**. When the
+rebalancer detects that `glossary.md` is stale (missing, or older than
+any memory file), it emits a `systemMessage` instructing Claude to:
+
+1. Read all memory files in the directory
+2. Identify the 10-20 most important key terms
+3. Write `glossary.md` with proper frontmatter and one-line definitions
+
+This avoids the limitations of regex-based term extraction (noisy
+results, wrong definitions, inability to understand context).
+
+### Staleness detection
+
+`glossary_is_stale()` compares the mtime of `glossary.md` against all
+memory files. If any memory file is newer, the glossary is stale.
+
+### Integration with rebalance()
+
+Glossary processing runs BEFORE the `needs_rebalance` check. This means:
+- The glossary is checked every run, not just when limits are exceeded
+- Adding the glossary entry may push MEMORY.md over limits, correctly
+  triggering a rebalance
+- `GLOSSARY_MIN_TERMS = 3` — glossary is skipped for trivial trees
+
+## Early Rebalancing
+
+Young trees (no `_index/` directory yet) are at higher risk of
+overflowing before the first rebalance. When `is_young_tree()` detects
+there is no `_index/` directory, the rebalancer triggers at 50% of the
+normal threshold. This prevents a burst of new memories from pushing
+MEMORY.md past the limit.
+
+## Hook Mode (--hook)
+
+When invoked with `--hook`, the rebalancer produces JSON `systemMessage`
+output instead of plain text. Each message is a separate JSON object on
+its own line:
+
+```json
+{"systemMessage": "alzheimer: 27/150 lines, 3/20 KB — balanced."}
+```
+
+This is how the rebalancer communicates with Claude:
+- **Status**: line count, byte count, whether rebalancing was needed
+- **Glossary updates**: instructions for Claude to rewrite glossary.md
+- **Warnings**: unresolvable issues (suggests running `--diagnose`)
+
+Without `--hook`, output is plain text suitable for manual use.
+
+## Reference Memory Seeding
+
+On install or update, `setup.py` writes a `reference_alzheimer.md` file
+into each project memory directory (`~/.claude/projects/*/memory/`).
+This ensures every Claude instance knows:
+- What "alzheimer" is
+- How to update it (`setup.py --update`)
+- How to diagnose issues (`rebalance.py --diagnose`)
+- How to report bugs (`rebalance.py --report`)
+
+The seeded file uses `type: reference` frontmatter and includes the
+install path and version, so Claude can run commands without guessing
+paths.
+
 ## Compatibility
 
 - **Auto Dream**: Leaf entries use standard format. Auto Dream can still
@@ -183,7 +281,8 @@ Depth 2 should suffice for any realistic Claude Code project.
 ```
 alzheimer/
 ├── DESIGN.md          (this file)
+├── README.md          (usage instructions)
 ├── rebalance.py       (core rebalancer script)
-├── test_rebalance.py  (tests)
-└── README.md          (usage instructions)
+├── setup.py           (installer, updater, reference memory seeder)
+└── test_rebalance.py  (tests)
 ```
