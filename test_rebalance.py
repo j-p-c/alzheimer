@@ -1194,6 +1194,29 @@ class TestInlineContentDetection(unittest.TestCase):
                 after = f.read()
             self.assertEqual(content, after)
 
+    def test_inline_content_under_limit_no_warning(self):
+        """Inline content in under-limit file is an action, not a warning."""
+        with TestDir() as d:
+            lines = [
+                "# Memory Index", "",
+                "- [A](a.md) — desc a",
+                "Brief context note",
+                "- [B](b.md) — desc b", "",
+            ]
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("\n".join(lines))
+            make_leaf(d, "a.md", "user", "A", "desc a")
+            make_leaf(d, "b.md", "feedback", "B", "desc b")
+            actions, warnings, _ = rebalance(d, max_lines=150)
+            # No warning — file is under limits.
+            self.assertFalse(
+                any("inline content" in w for w in warnings),
+                f"Should not warn when under limit: {warnings}")
+            # But should note it in actions.
+            self.assertTrue(
+                any("inline content" in a for a in actions),
+                f"Expected inline content note in actions: {actions}")
+
     def test_post_rebalance_still_over_warns(self):
         """Warn when file is still over limits after rebalancing."""
         with TestDir() as d:

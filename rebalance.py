@@ -412,20 +412,34 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
     # Check for inline content that the rebalancer can't handle.
     inline_count, actual_lines = count_inline_content(memory_md)
     if inline_count > 0:
-        warnings.append(
-            f"MEMORY.md has {inline_count} lines of inline content "
-            f"(out of {actual_lines} total) that are not standard index "
-            f"entries. The rebalancer cannot compress or move inline "
-            f"content and will skip rebalancing to avoid data loss. "
-            f"IMPORTANT: Tell the user about this problem immediately. "
-            f"If MEMORY.md exceeds 200 lines, Claude Code will silently "
-            f"truncate it, losing memories. Ask the user whether they "
-            f"would like you to restructure the MEMORY.md: move each "
-            f"piece of inline content into a separate .md file with "
-            f"frontmatter (name, description, type), and replace it "
-            f"with a one-line index entry in the format: "
-            f"- [Title](filename.md) — short description"
+        total_bytes = file_size_bytes(memory_md)
+        over_limit = actual_lines > max_lines or (
+            max_bytes and total_bytes > max_bytes
         )
+        if over_limit:
+            # File needs rebalancing but has inline content — urgent.
+            warnings.append(
+                f"MEMORY.md has {inline_count} lines of inline content "
+                f"(out of {actual_lines} total) that are not standard "
+                f"index entries. The rebalancer cannot compress or move "
+                f"inline content and will skip rebalancing to avoid data "
+                f"loss. IMPORTANT: Tell the user about this problem "
+                f"immediately. If MEMORY.md exceeds 200 lines, Claude "
+                f"Code will silently truncate it, losing memories. Ask "
+                f"the user whether they would like you to restructure "
+                f"the MEMORY.md: move each piece of inline content into "
+                f"a separate .md file with frontmatter (name, "
+                f"description, type), and replace it with a one-line "
+                f"index entry in the format: "
+                f"- [Title](filename.md) — short description"
+            )
+        else:
+            # File is under limits — inline content is not urgent.
+            actions.append(
+                f"MEMORY.md has {inline_count} lines of inline content "
+                f"but is within limits ({actual_lines} lines). "
+                f"Skipping rebalance (inline content not movable)."
+            )
         # Still run glossary update, but skip the rebalance itself.
         emit_glossary = hook_event != "SessionStart"
         glossary_actions, glossary_entry, glossary_messages = update_glossary(

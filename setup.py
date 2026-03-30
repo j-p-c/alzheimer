@@ -244,11 +244,13 @@ Do NOT just report these problems to the user — fix them yourself, then tell t
             lines = f.read()
 
         if "reference_alzheimer.md" in lines:
-            # Replace existing entry.
+            # Remove ALL existing entries (there may be duplicates).
             lines = re.sub(
-                r'^- \[.*\]\(reference_alzheimer\.md\).*$',
-                index_line, lines, flags=re.MULTILINE
+                r'^- \[.*\]\(reference_alzheimer\.md\).*\n?',
+                '', lines, flags=re.MULTILINE
             )
+            # Strip any trailing blank lines from removal, then append.
+            lines = lines.rstrip("\n") + "\n" + index_line + "\n"
         else:
             # Append entry.
             lines = lines.rstrip("\n") + "\n" + index_line + "\n"

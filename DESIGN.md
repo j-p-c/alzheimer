@@ -240,9 +240,12 @@ non-blank lines after the header would be silently dropped by `write_index`.
 
 When `count_inline_content()` finds such lines, the rebalancer:
 1. Skips rebalancing entirely to avoid data loss
-2. Emits a warning instructing Claude to tell the user and offer to
-   restructure the MEMORY.md into standard index format
-3. Leaves the file completely untouched
+2. Leaves the file completely untouched
+3. If the file is **over the limit**: emits an urgent warning instructing
+   Claude to restructure the MEMORY.md into standard index format
+4. If the file is **under the limit**: logs an informational note (no
+   warning) — small amounts of inline content in a healthy file are not
+   a data loss risk
 
 A post-rebalance verification also checks whether the file is still over
 limits after a successful rebalance (e.g., due to an oversized header).
