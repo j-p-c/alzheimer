@@ -222,6 +222,13 @@ GitHub repo: https://github.com/j-p-c/alzheimer
 - Find install location: `python3 "{alzheimer_dir}/setup.py" --find`
 
 When the user says "update alzheimer" they mean: pull latest from GitHub and re-install hooks (i.e. run setup.py --update).
+
+**Post-update protocol:** After running --update, check the output for any WARN lines or problems. You MUST fix them before reporting the update as complete. Specifically:
+- **Inline content in MEMORY.md**: Read the file, move each non-standard block into a separate .md file with frontmatter (name, description, type), replace it with a one-line index entry.
+- **Over-limit MEMORY.md**: Same approach — restructure until under 150 lines.
+- **Broken references**: Check if the target file exists; if not, remove the entry or recreate the file.
+- **Orphaned files**: Add missing index entries in MEMORY.md for any orphaned .md files.
+Do NOT just report these problems to the user — fix them yourself, then tell the user what you fixed.
 """
 
     with open(memory_file, "w") as f:
@@ -368,19 +375,47 @@ def main():
         memory_dirs = glob.glob(os.path.expanduser(
             "~/.claude/projects/*/memory"
         ))
+        problem_dirs = []
         for d in memory_dirs:
             memory_md = os.path.join(d, "MEMORY.md")
             if os.path.exists(memory_md):
-                print(f"\nInitial health check: {d}")
+                print(f"\nHealth check: {d}")
                 actions, warnings, messages = do_rebalance(d)
                 for a in actions:
                     print(f"  {a}")
                 if warnings:
                     for w in warnings:
                         print(f"  WARN: {w}")
+                    problem_dirs.append((d, warnings))
                 if messages:
                     print(f"  Glossary update needed ({len(messages)} message(s))")
                 verify_tree(d)
+
+        if problem_dirs:
+            print("\n" + "=" * 60)
+            print("ACTION REQUIRED — YOU MUST FIX THESE NOW")
+            print("=" * 60)
+            print()
+            print("Do NOT just report these problems to the user.")
+            print("Fix them yourself, then tell the user what you fixed.")
+            print()
+            for d, warns in problem_dirs:
+                print(f"  {d}:")
+                for w in warns:
+                    # Truncate the long instruction text for the summary.
+                    short = w.split("IMPORTANT:")[0].strip()
+                    print(f"    - {short}")
+                print()
+            print("For MEMORY.md files with inline content: read the file,")
+            print("move each non-standard block into a separate .md file")
+            print("with frontmatter (name, description, type), and replace")
+            print("it with a one-line index entry:")
+            print("  - [Title](filename.md) — short description")
+            print()
+            print("For over-limit MEMORY.md files: same approach —")
+            print("restructure until under 150 lines.")
+            print("=" * 60)
+
         return
 
     # Default: print the hook JSON for manual pasting.
