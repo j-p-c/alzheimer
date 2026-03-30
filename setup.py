@@ -268,14 +268,15 @@ def seed_all_memory_dirs(alzheimer_dir):
 
 
 def do_update(settings_path):
-    """Pull latest changes and re-install hooks.
+    """Pull latest changes, then delegate to --install via fresh process.
 
-    Can be run from the alzheimer directory itself (setup.py --update)
-    or used by Claude after finding the install dir via settings.json.
+    After git pull, setup.py on disk may be newer than the version loaded
+    in memory. We subprocess to --install so the updated code runs.
     """
     import subprocess
 
     alzheimer_dir = os.path.dirname(os.path.abspath(__file__))
+    setup_py = os.path.join(alzheimer_dir, "setup.py")
 
     print(f"Alzheimer directory: {alzheimer_dir}")
     print()
@@ -292,45 +293,15 @@ def do_update(settings_path):
     print(f"  {result.stdout.strip()}")
     print()
 
-    # Re-install hooks (in case hook format changed).
-    print("Re-installing hooks...")
-    rebalancer_path = get_rebalancer_path()
-    hooks = generate_hooks(rebalancer_path)
-    install_hooks(settings_path, hooks)
-    print(f"  Hooks updated in {settings_path}")
+    # Delegate to --install using the (potentially updated) code.
+    print("Installing with updated code...")
     print()
-
-    # Seed reference memory.
-    print("Seeding alzheimer reference memory:")
-    seed_all_memory_dirs(alzheimer_dir)
-    print()
-
-    # Verify hooks.
-    print("Verifying hooks:")
-    ok = check_hooks(settings_path, rebalancer_path)
-    print()
-
-    # Run rebalance + verify on all memory directories.
-    from rebalance import rebalance as do_rebalance, verify_tree
-    memory_dirs = glob.glob(os.path.expanduser(
-        "~/.claude/projects/*/memory"
-    ))
-    for d in memory_dirs:
-        memory_md = os.path.join(d, "MEMORY.md")
-        if os.path.exists(memory_md):
-            print(f"Health check: {d}")
-            actions, warnings, messages = do_rebalance(d)
-            for a in actions:
-                print(f"  {a}")
-            if warnings:
-                for w in warnings:
-                    print(f"  WARN: {w}")
-                ok = False
-            if messages:
-                print(f"  Glossary update needed ({len(messages)} message(s))")
-            verify_tree(d)
-
-    return ok
+    sys.stdout.flush()
+    result = subprocess.run(
+        [sys.executable, setup_py, "--install", "--settings", settings_path],
+        cwd=alzheimer_dir
+    )
+    return result.returncode == 0
 
 
 def main():
