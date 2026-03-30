@@ -305,9 +305,31 @@ def do_update(settings_path):
     seed_all_memory_dirs(alzheimer_dir)
     print()
 
-    # Verify.
-    print("Verifying:")
+    # Verify hooks.
+    print("Verifying hooks:")
     ok = check_hooks(settings_path, rebalancer_path)
+    print()
+
+    # Run rebalance + verify on all memory directories.
+    from rebalance import rebalance as do_rebalance, verify_tree
+    memory_dirs = glob.glob(os.path.expanduser(
+        "~/.claude/projects/*/memory"
+    ))
+    for d in memory_dirs:
+        memory_md = os.path.join(d, "MEMORY.md")
+        if os.path.exists(memory_md):
+            print(f"Health check: {d}")
+            actions, warnings, messages = do_rebalance(d)
+            for a in actions:
+                print(f"  {a}")
+            if warnings:
+                for w in warnings:
+                    print(f"  WARN: {w}")
+                ok = False
+            if messages:
+                print(f"  Glossary update needed ({len(messages)} message(s))")
+            verify_tree(d)
+
     return ok
 
 
