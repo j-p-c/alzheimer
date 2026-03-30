@@ -224,6 +224,29 @@ Glossary processing runs BEFORE the `needs_rebalance` check. This means:
 - Adding the glossary entry may push MEMORY.md over limits, correctly
   triggering a rebalance
 - `GLOSSARY_MIN_TERMS = 3` — glossary is skipped for trivial trees
+- **Glossary update messages are suppressed on SessionStart.** On machines
+  with many project directories, emitting glossary instructions for every
+  stale project at startup floods Claude with competing instructions that
+  are unlikely to be acted on. Instead, glossary update instructions are
+  only emitted on PostToolUse (after memory writes), when Claude is already
+  acting on a specific project and there is only one instruction to follow.
+
+### Inline content detection
+
+MEMORY.md files that contain inline content (notes, commands, multi-line
+blocks mixed between standard index entries) cannot be safely rebalanced.
+The parser only recognizes `- [Title](file.md) — desc` entries; any other
+non-blank lines after the header would be silently dropped by `write_index`.
+
+When `count_inline_content()` finds such lines, the rebalancer:
+1. Skips rebalancing entirely to avoid data loss
+2. Emits a warning instructing Claude to tell the user and offer to
+   restructure the MEMORY.md into standard index format
+3. Leaves the file completely untouched
+
+A post-rebalance verification also checks whether the file is still over
+limits after a successful rebalance (e.g., due to an oversized header).
+If so, it warns with restructuring instructions.
 
 ## Early Rebalancing
 

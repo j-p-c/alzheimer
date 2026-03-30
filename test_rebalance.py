@@ -20,6 +20,7 @@ from rebalance import (
     build_glossary_entry,
     collect_anomalies,
     collect_memory_files,
+    count_inline_content,
     extract_keywords,
     file_size_bytes,
     find_orphans,
@@ -1121,6 +1122,103 @@ class TestEarlyRebalance(unittest.TestCase):
                 any("no rebalancing" in a.lower() for a in actions))
 
 
+class TestInlineContentDetection(unittest.TestCase):
+    """Test detection and handling of non-standard MEMORY.md content."""
+
+    def test_count_inline_content_clean(self):
+        """Clean index has zero inline lines."""
+        with TestDir() as d:
+            make_leaf(d, "user_a.md", "user", "A", "desc a")
+            make_leaf(d, "fb_b.md", "feedback", "B", "desc b")
+            make_index(d, [("A", "user_a.md", "desc a"),
+                           ("B", "fb_b.md", "desc b")])
+            inline, total = count_inline_content(
+                os.path.join(d, "MEMORY.md"))
+            self.assertEqual(inline, 0)
+
+    def test_count_inline_content_with_inline(self):
+        """MEMORY.md with inline content between entries is detected."""
+        with TestDir() as d:
+            lines = [
+                "# Memory Index", "",
+                "- [A](a.md) — desc a",
+                "Some inline note about A",
+                "More details about A",
+                "- [B](b.md) — desc b",
+                "Inline note about B", "",
+            ]
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("\n".join(lines))
+            inline, total = count_inline_content(
+                os.path.join(d, "MEMORY.md"))
+            self.assertEqual(inline, 3)  # 3 non-blank inline lines
+
+    def test_inline_content_skips_rebalance(self):
+        """Rebalancer skips rebalancing when inline content is detected."""
+        with TestDir() as d:
+            # Build a MEMORY.md with inline content that exceeds limits.
+            lines = ["# Memory Index", ""]
+            for i in range(20):
+                make_leaf(d, f"fb_{i}.md", "feedback", f"FB {i}", f"d{i}")
+                lines.append(f"- [FB {i}](fb_{i}.md) — d{i}")
+                lines.append(f"Inline note for item {i}")
+            lines.append("")
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("\n".join(lines))
+            actions, warnings, _ = rebalance(d, max_lines=30)
+            # Should warn about inline content.
+            self.assertTrue(
+                any("inline content" in w for w in warnings),
+                f"Expected inline content warning in: {warnings}")
+            # Should NOT have created _index/ (rebalance was skipped).
+            self.assertFalse(
+                os.path.isdir(os.path.join(d, "_index")))
+
+    def test_inline_content_preserves_file(self):
+        """When inline content is detected, MEMORY.md is not modified."""
+        with TestDir() as d:
+            lines = [
+                "# Memory Index", "",
+                "- [A](a.md) — desc a",
+                "Inline content here",
+                "- [B](b.md) — desc b", "",
+            ]
+            content = "\n".join(lines)
+            path = os.path.join(d, "MEMORY.md")
+            with open(path, "w") as f:
+                f.write(content)
+            make_leaf(d, "a.md", "user", "A", "desc a")
+            make_leaf(d, "b.md", "feedback", "B", "desc b")
+            rebalance(d, max_lines=3)
+            with open(path) as f:
+                after = f.read()
+            self.assertEqual(content, after)
+
+    def test_post_rebalance_still_over_warns(self):
+        """Warn when file is still over limits after rebalancing."""
+        with TestDir() as d:
+            # Create a huge header that can't be compressed.
+            header_lines = ["# Memory Index", ""]
+            for i in range(160):
+                header_lines.append(f"# Section {i}")
+            header_lines.append("")
+            # A few entries at the end.
+            entries = []
+            for i in range(5):
+                fname = f"fb_{i}.md"
+                make_leaf(d, fname, "feedback", f"FB {i}", f"d{i}")
+                entries.append(f"- [FB {i}]({fname}) — d{i}")
+            all_lines = header_lines + entries + [""]
+            with open(os.path.join(d, "MEMORY.md"), "w") as f:
+                f.write("\n".join(all_lines))
+            # No inline content (all non-entry lines are before first entry
+            # = header). Rebalance will proceed but can't compress header.
+            actions, warnings, _ = rebalance(d, max_lines=150)
+            self.assertTrue(
+                any("still over" in w for w in warnings),
+                f"Expected 'still over' warning in: {warnings}")
+
+
 class TestHookCLIOutput(unittest.TestCase):
     """Test --hook CLI output format (single JSON object)."""
 
@@ -1187,12 +1285,25 @@ class TestHookCLIOutput(unittest.TestCase):
         import json
         with TestDir() as d:
             self._make_tree(d)
+            # Use PostToolUse — SessionStart suppresses glossary messages,
+            # so there would be no hookSpecificOutput to carry the event name.
             lines, _ = self._run_hook(d,
-                                      ["--hook-event", "SessionStart"])
+                                      ["--hook-event", "PostToolUse"])
             obj = json.loads(lines[0])
             self.assertEqual(
                 obj["hookSpecificOutput"]["hookEventName"],
-                "SessionStart")
+                "PostToolUse")
+
+    def test_session_start_suppresses_glossary(self):
+        """SessionStart does not emit glossary update instructions."""
+        import json
+        with TestDir() as d:
+            self._make_tree(d)
+            # No glossary = stale, but SessionStart should suppress.
+            lines, _ = self._run_hook(d,
+                                      ["--hook-event", "SessionStart"])
+            obj = json.loads(lines[0])
+            self.assertNotIn("hookSpecificOutput", obj)
 
     def test_hook_no_additional_context_when_fresh(self):
         """When glossary is fresh and no warnings, no hookSpecificOutput."""

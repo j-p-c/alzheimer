@@ -127,6 +127,29 @@ ENTRY_RE = re.compile(
 )
 
 
+def count_inline_content(filepath):
+    """Count non-blank, non-entry lines after the header in an index file.
+
+    These are lines that the parser cannot handle — inline notes, raw
+    commands, multi-line content that should be in separate topic files.
+    Returns (inline_count, total_lines).
+    """
+    inline_count = 0
+    total_lines = 0
+    in_header = True
+    with open(filepath) as f:
+        for line in f:
+            total_lines += 1
+            stripped = line.rstrip("\n")
+            if ENTRY_RE.match(stripped):
+                in_header = False
+            elif in_header:
+                pass
+            elif stripped:
+                inline_count += 1
+    return inline_count, total_lines
+
+
 def parse_index(filepath):
     """Parse an index file into (header_lines, entries).
 
@@ -367,7 +390,8 @@ def write_index(filepath, header, entries):
 # ── Main rebalance logic ──────────────────────────────────────────────
 
 def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
-              max_bytes=DEFAULT_MAX_BYTES, dry_run=False):
+              max_bytes=DEFAULT_MAX_BYTES, dry_run=False,
+              hook_event=None):
     """Rebalance the memory tree rooted at MEMORY.md.
 
     Returns (actions, warnings, messages) where:
@@ -385,9 +409,38 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
 
     header, entries = parse_index(memory_md)
 
+    # Check for inline content that the rebalancer can't handle.
+    inline_count, actual_lines = count_inline_content(memory_md)
+    if inline_count > 0:
+        warnings.append(
+            f"MEMORY.md has {inline_count} lines of inline content "
+            f"(out of {actual_lines} total) that are not standard index "
+            f"entries. The rebalancer cannot compress or move inline "
+            f"content and will skip rebalancing to avoid data loss. "
+            f"IMPORTANT: Tell the user about this problem immediately. "
+            f"If MEMORY.md exceeds 200 lines, Claude Code will silently "
+            f"truncate it, losing memories. Ask the user whether they "
+            f"would like you to restructure the MEMORY.md: move each "
+            f"piece of inline content into a separate .md file with "
+            f"frontmatter (name, description, type), and replace it "
+            f"with a one-line index entry in the format: "
+            f"- [Title](filename.md) — short description"
+        )
+        # Still run glossary update, but skip the rebalance itself.
+        emit_glossary = hook_event != "SessionStart"
+        glossary_actions, glossary_entry, glossary_messages = update_glossary(
+            memory_dir, dry_run, emit_messages=emit_glossary
+        )
+        actions.extend(glossary_actions)
+        messages.extend(glossary_messages)
+        return actions, warnings, messages
+
     # Update glossary (always runs, even when tree is within limits).
+    # Suppress glossary messages on SessionStart to avoid flooding
+    # Claude with stale instructions across many project directories.
+    emit_glossary = hook_event != "SessionStart"
     glossary_actions, glossary_entry, glossary_messages = update_glossary(
-        memory_dir, dry_run
+        memory_dir, dry_run, emit_messages=emit_glossary
     )
     actions.extend(glossary_actions)
     messages.extend(glossary_messages)
@@ -521,6 +574,20 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
         f"MEMORY.md: {total_lines} → {new_total} lines."
     )
 
+    # Verify post-rebalance state.
+    if not dry_run and new_total > max_lines:
+        warnings.append(
+            f"MEMORY.md is still over the {max_lines}-line limit "
+            f"after rebalancing ({new_total} lines). "
+            f"IMPORTANT: Tell the user about this problem immediately. "
+            f"If MEMORY.md exceeds 200 lines, Claude Code will silently "
+            f"truncate it, losing memories. This usually means the "
+            f"header section is too large. Ask the user whether they "
+            f"would like you to restructure it: move content from the "
+            f"header into individual topic files with one-line index "
+            f"entries."
+        )
+
     # Recursively rebalance child indices.
     for entry in new_entries:
         if is_category_entry(entry):
@@ -640,11 +707,18 @@ def build_glossary_entry(terms):
     }
 
 
-def update_glossary(memory_dir, dry_run=False):
+def update_glossary(memory_dir, dry_run=False, emit_messages=True):
     """Check glossary freshness, return (actions, entry_or_None, messages).
 
     If glossary is stale, emits a systemMessage for Claude to rewrite it.
     If glossary exists and is fresh, parses it for the MEMORY.md entry.
+
+    Args:
+        memory_dir: path to the memory directory.
+        dry_run: if True, don't write anything.
+        emit_messages: if False, suppress glossary update messages
+            (used on SessionStart to avoid flooding Claude with
+            stale glossary instructions across many projects).
 
     Returns:
         actions: list of log strings
@@ -664,7 +738,7 @@ def update_glossary(memory_dir, dry_run=False):
             )
             return actions, None, messages
 
-        if not dry_run:
+        if not dry_run and emit_messages:
             messages.append(glossary_system_message(memory_dir))
         actions.append("Glossary: stale or missing — requesting update.")
 
@@ -1369,7 +1443,8 @@ def main():
     rebalancer_path = os.path.abspath(__file__)
     try:
         actions, warnings, messages = rebalance(
-            memory_dir, max_lines, max_bytes, args.dry_run
+            memory_dir, max_lines, max_bytes, args.dry_run,
+            hook_event=args.hook_event
         )
     except Exception:
         exception_info = traceback.format_exc()
