@@ -590,12 +590,11 @@ def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
         warnings.append(
             f"DRIFT: {len(oversized)} oversized memory file(s): "
             f"{details}{more}. "
-            f"Memory files over {LEAF_MAX_LINES} lines are hard to "
-            f"maintain and may indicate content that should be trimmed "
-            f"or split. "
-            f"IMPORTANT: Read each oversized file and trim or split it. "
-            f"Archive completed/historical sections into separate files, "
-            f"keeping only active/current content."
+            f"These files waste context window space when loaded, "
+            f"causing more frequent compactions and potential context "
+            f"loss. Read each file, archive completed/historical "
+            f"sections into separate files with frontmatter, and keep "
+            f"only active/current content in the original."
         )
 
     return actions, warnings
@@ -1750,10 +1749,11 @@ def main():
             rebalanced = any("rebalancing..." in a for a in actions)
 
             if warnings:
-                warn_summary = "; ".join(warnings)
+                # Short summary for the status line.  Full details go
+                # to additionalContext where Claude can act on them.
                 summary = (f"alzheimer: {line_count}/{max_lines} lines, "
                            f"{kb}/{max_bytes // 1024} KB — "
-                           f"warnings: {warn_summary}")
+                           f"{len(warnings)} issue(s) need attention")
             elif rebalanced:
                 summary = (f"alzheimer: rebalanced to "
                            f"{line_count}/{max_lines} lines, "
