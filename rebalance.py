@@ -1269,9 +1269,13 @@ def find_orphans(memory_dir):
                 os.path.join(index_rel_dir, e["path"])
             )
             referenced.add(resolved)
-            # If it's a sub-index, recurse into it.
+            # Only recurse into sub-indices (files inside _index/),
+            # not leaf files (which may contain markdown links that
+            # would be false-positive references).
             full = os.path.join(memory_dir, resolved)
-            if os.path.exists(full) and not e["path"].startswith("../"):
+            is_subindex = resolved.startswith("_index/") or (
+                resolved.startswith("_index" + os.sep))
+            if os.path.exists(full) and is_subindex:
                 collect_refs(full)
 
     # Start from MEMORY.md.
@@ -1363,8 +1367,12 @@ def collect_anomalies(memory_dir, max_lines=DEFAULT_MAX_LINES,
                     {"source": os.path.relpath(index_path, memory_dir),
                      "target": e["path"]}
                 ))
-            elif not e["path"].startswith("../"):
-                check_refs(target)
+            # Only recurse into sub-indices (inside _index/).
+            else:
+                rel = os.path.relpath(target, memory_dir)
+                if rel.startswith("_index/") or rel.startswith(
+                        "_index" + os.sep):
+                    check_refs(target)
 
     check_refs(memory_md)
 
@@ -1538,9 +1546,12 @@ def verify_tree(memory_dir, max_lines=DEFAULT_MAX_LINES,
             if not os.path.exists(target):
                 broken.append((os.path.relpath(index_path, memory_dir),
                                 e["path"]))
-            # Recurse into sub-indices.
-            if not e["path"].startswith("../") and os.path.exists(target):
-                check_refs(target)
+            # Only recurse into sub-indices (inside _index/).
+            else:
+                rel = os.path.relpath(target, memory_dir)
+                if rel.startswith("_index/") or rel.startswith(
+                        "_index" + os.sep):
+                    check_refs(target)
 
     check_refs(memory_md)
     if broken:
@@ -1571,12 +1582,15 @@ def verify_tree(memory_dir, max_lines=DEFAULT_MAX_LINES,
             print(f"WARN: {name}: {lines} lines, {nbytes} bytes — "
                   f"over limit.")
         for entry in e:
-            if not entry["path"].startswith("../"):
-                child = os.path.normpath(
-                    os.path.join(os.path.dirname(index_path),
-                                 entry["path"])
-                )
-                if os.path.exists(child):
+            child = os.path.normpath(
+                os.path.join(os.path.dirname(index_path),
+                             entry["path"])
+            )
+            # Only recurse into sub-indices (inside _index/).
+            if os.path.exists(child):
+                rel = os.path.relpath(child, memory_dir)
+                if rel.startswith("_index/") or rel.startswith(
+                        "_index" + os.sep):
                     check_sizes(child)
 
     check_sizes(memory_md)
