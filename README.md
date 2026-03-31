@@ -305,6 +305,17 @@ python3 -m unittest test_rebalance -v
 - Update staleness check (cache roundtrip, expiry, no-git fallback)
 - CLI alias (--check for --verify)
 
+## Concurrency
+
+Running multiple Claude instances in different directories is fine —
+each gets its own memory tree. Running multiple instances in the **same
+directory** is generally an anti-pattern (Claude Code itself has no
+concurrency model for shared memory). Alzheimer makes this slightly
+worse: the rebalancer does read-modify-write on MEMORY.md without file
+locking, so simultaneous hook runs could clobber each other's writes.
+In practice the risk is low (the rebalancer runs in under a second),
+but if you need concurrent access, be aware of this limitation.
+
 ## License
 
 MIT No Attribution (MIT-0)
