@@ -16,9 +16,11 @@ from rebalance import (
     GLOSSARY_MIN_TERMS,
     HARD_MAX_LINES,
     HARD_MAX_BYTES,
+    LEAF_MAX_LINES,
     MIN_GROUP_SIZE,
     MAX_DEPTH,
     build_glossary_entry,
+    check_drift,
     collect_anomalies,
     collect_memory_files,
     count_inline_content,
@@ -1351,6 +1353,110 @@ class TestHookCLIOutput(unittest.TestCase):
             lines, _ = self._run_hook(d)
             obj = json.loads(lines[0])
             self.assertNotIn("hookSpecificOutput", obj)
+
+
+class TestCheckDrift(unittest.TestCase):
+    """Test lightweight orphan + leaf-size detection in check_drift()."""
+
+    def test_no_drift(self):
+        """Clean tree produces no warnings."""
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A", "short")
+            make_index(d, [("A", "a.md", "desc")])
+            warnings = check_drift(d)
+            self.assertEqual(warnings, [])
+
+    def test_orphan_detected(self):
+        """Unreferenced file produces orphan warning."""
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A")
+            make_leaf(d, "orphan.md", "user", "Orphan")
+            make_index(d, [("A", "a.md", "desc")])
+            warnings = check_drift(d)
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("DRIFT", warnings[0])
+            self.assertIn("orphan.md", warnings[0])
+
+    def test_multiple_orphans(self):
+        """Multiple orphans reported in a single warning."""
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A")
+            make_leaf(d, "x.md", "user", "X")
+            make_leaf(d, "y.md", "user", "Y")
+            make_index(d, [("A", "a.md", "desc")])
+            warnings = check_drift(d)
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("2 orphaned", warnings[0])
+
+    def test_oversized_leaf_detected(self):
+        """Leaf file over LEAF_MAX_LINES triggers warning."""
+        with TestDir() as d:
+            big_file = os.path.join(d, "big.md")
+            with open(big_file, "w") as f:
+                f.write("---\nname: Big\ntype: user\n---\n")
+                for i in range(LEAF_MAX_LINES + 10):
+                    f.write(f"Line {i}\n")
+            make_index(d, [("Big", "big.md", "desc")])
+            warnings = check_drift(d)
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("DRIFT", warnings[0])
+            self.assertIn("big.md", warnings[0])
+            self.assertIn("oversized", warnings[0])
+
+    def test_leaf_under_limit_no_warning(self):
+        """Leaf file at exactly LEAF_MAX_LINES does not warn."""
+        with TestDir() as d:
+            ok_file = os.path.join(d, "ok.md")
+            with open(ok_file, "w") as f:
+                for i in range(LEAF_MAX_LINES):
+                    f.write(f"Line {i}\n")
+            make_index(d, [("OK", "ok.md", "desc")])
+            warnings = check_drift(d)
+            self.assertEqual(warnings, [])
+
+    def test_drift_flows_through_rebalance(self):
+        """Drift warnings appear in rebalance() output."""
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A")
+            make_leaf(d, "orphan.md", "user", "Orphan")
+            make_index(d, [("A", "a.md", "desc")])
+            actions, warnings, messages = rebalance(d)
+            self.assertTrue(
+                any("DRIFT" in w for w in warnings),
+                "Drift warning should flow through rebalance()"
+            )
+
+    def test_glossary_not_flagged(self):
+        """Glossary file should not be flagged as orphan or oversized."""
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A")
+            make_index(d, [("A", "a.md", "desc")])
+            # Write a large glossary.
+            gpath = os.path.join(d, GLOSSARY_FILE)
+            with open(gpath, "w") as f:
+                f.write("---\ntype: glossary\n---\n")
+                for i in range(200):
+                    f.write(f"- **Term{i}** — definition\n")
+            warnings = check_drift(d)
+            self.assertEqual(warnings, [])
+
+
+class TestCheckAlias(unittest.TestCase):
+    """Test that --check works as alias for --verify."""
+
+    def test_check_alias(self):
+        """--check should invoke verify_tree and exit cleanly."""
+        import subprocess
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A")
+            make_index(d, [("A", "a.md", "desc")])
+            result = subprocess.run(
+                ["python3", "rebalance.py", d, "--check"],
+                capture_output=True, text=True,
+                cwd=os.path.dirname(os.path.abspath(__file__))
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("All checks passed", result.stdout)
 
 
 class TestBugReportPrivacy(unittest.TestCase):

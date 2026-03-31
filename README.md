@@ -158,7 +158,7 @@ python3 rebalance.py /path/to/memory/
 # Find orphaned memory files
 python3 rebalance.py /path/to/memory/ --orphans
 
-# Verify tree integrity
+# Verify tree integrity (--check is an alias)
 python3 rebalance.py /path/to/memory/ --verify
 
 # Custom limits
@@ -196,8 +196,13 @@ ensure the tree rebalances:
 Each hook invokes `rebalance.py --hook --hook-event <event>` which
 produces a single JSON object on stdout. The `systemMessage` field
 is displayed in the Claude Code UI; `hookSpecificOutput.additionalContext`
-carries instructions for Claude (glossary updates, warnings) without
-cluttering your terminal.
+carries instructions for Claude (glossary updates, drift warnings)
+without cluttering your terminal.
+
+On every run, the rebalancer also checks for **drift**: orphaned memory
+files (on disk but not in any index) and oversized leaf files (over
+150 lines). If drift is detected, Claude receives instructions to fix
+the problems immediately — no waiting for the next `--verify` run.
 
 ## Design
 
@@ -270,7 +275,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-91 tests covering:
+99 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
@@ -291,6 +296,8 @@ python3 -m unittest test_rebalance -v
 - Glossary integration (staleness detection, parsing, pinning)
 - Early rebalancing (young tree threshold)
 - Bug report privacy (filename anonymization, no paths or content leaked)
+- Drift detection (orphans, oversized leaves, glossary exclusion, integration)
+- CLI alias (--check for --verify)
 
 ## License
 

@@ -261,6 +261,19 @@ there is no `_index/` directory, the rebalancer triggers at 50% of the
 normal threshold. This prevents a burst of new memories from pushing
 MEMORY.md past the limit.
 
+## Drift Detection
+
+Problems that the rebalancer can't fix itself — orphaned files (on disk
+but not in any index) and oversized leaf files (over 150 lines) — used
+to accumulate silently between `--verify` runs. Now `check_drift()` runs
+on every invocation (including no-op runs where MEMORY.md is within
+limits) and reports problems via `additionalContext` so Claude can fix
+them immediately.
+
+`check_drift()` is intentionally lightweight: one directory listing plus
+entry comparison. It excludes `glossary.md` (managed by the rebalancer)
+and files in `_index/` (already checked by `rebalance_index()`).
+
 ## Hook Mode (--hook)
 
 When invoked with `--hook`, the rebalancer produces a single JSON object

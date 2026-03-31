@@ -387,6 +387,74 @@ def write_index(filepath, header, entries):
         f.write("\n".join(lines))
 
 
+# ── Drift detection ───────────────────────────────────────────────────
+
+# Leaf files over this many lines trigger a warning.  Individual memory
+# files shouldn't be enormous — they become hard to maintain and may
+# indicate content that should be split or trimmed.
+LEAF_MAX_LINES = 150
+
+
+def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES):
+    """Lightweight check for orphaned files and oversized leaf files.
+
+    Runs after every rebalance (including no-op runs) to catch problems
+    that accumulate between --verify runs.  Returns a list of warning
+    strings suitable for additionalContext.
+    """
+    warnings = []
+
+    # Orphan check (exclude glossary — it's managed by the rebalancer).
+    orphans = [o for o in find_orphans(memory_dir) if o != GLOSSARY_FILE]
+    if orphans:
+        orphan_list = ", ".join(sorted(orphans)[:10])
+        more = f" (+{len(orphans) - 10} more)" if len(orphans) > 10 else ""
+        warnings.append(
+            f"DRIFT: {len(orphans)} orphaned memory file(s) found: "
+            f"{orphan_list}{more}. "
+            f"These files exist on disk but are not referenced in any "
+            f"index. They will be invisible to Claude until index "
+            f"entries are added. "
+            f"IMPORTANT: Read each orphaned file, then add a proper "
+            f"one-line index entry to MEMORY.md for each one: "
+            f"- [Title](filename.md) — short description"
+        )
+
+    # Oversized leaf file check.
+    skip = {"MEMORY.md", GLOSSARY_FILE}
+    oversized = []
+    for name in sorted(os.listdir(memory_dir)):
+        if name in skip or name.startswith("_") or not name.endswith(".md"):
+            continue
+        filepath = os.path.join(memory_dir, name)
+        try:
+            with open(filepath) as fh:
+                line_count = sum(1 for _ in fh)
+        except OSError:
+            continue
+        if line_count > LEAF_MAX_LINES:
+            oversized.append((name, line_count))
+
+    if oversized:
+        details = ", ".join(
+            f"{name} ({lines} lines)" for name, lines in oversized[:5]
+        )
+        more = (f" (+{len(oversized) - 5} more)"
+                if len(oversized) > 5 else "")
+        warnings.append(
+            f"DRIFT: {len(oversized)} oversized memory file(s): "
+            f"{details}{more}. "
+            f"Memory files over {LEAF_MAX_LINES} lines are hard to "
+            f"maintain and may indicate content that should be trimmed "
+            f"or split. "
+            f"IMPORTANT: Read each oversized file and trim or split it. "
+            f"Archive completed/historical sections into separate files, "
+            f"keeping only active/current content."
+        )
+
+    return warnings
+
+
 # ── Main rebalance logic ──────────────────────────────────────────────
 
 def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
@@ -447,6 +515,9 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
         )
         actions.extend(glossary_actions)
         messages.extend(glossary_messages)
+        # Check for drift (orphans, oversized leaf files).
+        drift = check_drift(memory_dir, max_lines)
+        warnings.extend(drift)
         return actions, warnings, messages
 
     # Update glossary (always runs, even when tree is within limits).
@@ -511,6 +582,9 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                     )
                     actions.extend(sub_actions)
                     warnings.extend(sub_warns)
+        # Check for drift (orphans, oversized leaf files).
+        drift = check_drift(memory_dir, max_lines)
+        warnings.extend(drift)
         return actions, warnings, messages
 
     size_info = f"{total_lines} lines, {total_bytes} bytes"
@@ -613,6 +687,10 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                 )
                 actions.extend(sub_actions)
                 warnings.extend(sub_warns)
+
+    # Check for drift (orphans, oversized leaf files).
+    drift = check_drift(memory_dir, max_lines)
+    warnings.extend(drift)
 
     return actions, warnings, messages
 
@@ -1388,7 +1466,7 @@ def main():
         help="Report memory files not referenced by any index.",
     )
     parser.add_argument(
-        "--verify", action="store_true",
+        "--verify", "--check", action="store_true",
         help="Verify tree integrity: check for orphans, broken refs, "
              "and size violations.",
     )
