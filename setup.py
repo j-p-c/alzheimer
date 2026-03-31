@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-setup.py — Generate Claude Code hook configuration for the alzheimer
-rebalancer, with paths appropriate for this machine.
+setup.py — Install and manage alzheimer hooks in Claude Code settings.
 
 Usage:
-    python3 setup.py              # Print hook JSON to paste into settings
+    python3 setup.py              # Preview hook configuration
     python3 setup.py --install    # Merge hooks into ~/.claude/settings.json
     python3 setup.py --check      # Verify hooks are installed correctly
+    python3 setup.py --update     # Pull latest changes and re-install
+    python3 setup.py --find       # Print install directory from settings
 """
 
 import glob

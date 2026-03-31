@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from rebalance import (
+    Anomaly,
     CONFIG_FILE,
     DEFAULT_MAX_LINES,
     DEFAULT_MAX_BYTES,
@@ -24,6 +25,7 @@ from rebalance import (
     extract_keywords,
     file_size_bytes,
     find_orphans,
+    format_bug_report,
     get_limits,
     glossary_is_stale,
     glossary_system_message,
@@ -1349,6 +1351,85 @@ class TestHookCLIOutput(unittest.TestCase):
             lines, _ = self._run_hook(d)
             obj = json.loads(lines[0])
             self.assertNotIn("hookSpecificOutput", obj)
+
+
+class TestBugReportPrivacy(unittest.TestCase):
+    """Ensure bug reports never leak sensitive filenames or paths."""
+
+    SENSITIVE_NAMES = [
+        "project_secret_acquisition.md",
+        "feedback_mental_health.md",
+        "user_salary_negotiations.md",
+        "reference_private_server.md",
+    ]
+
+    def _make_anomalies(self):
+        """Create anomalies with sensitive-looking filenames."""
+        return [
+            Anomaly("error", "MEMORY.md exceeds hard limit: 210 lines "
+                    "(max 200)", {"lines": 210, "limit": 200}),
+            Anomaly("error",
+                    "Broken reference: project_secret_acquisition.md",
+                    {"source": "MEMORY.md",
+                     "target": "project_secret_acquisition.md"}),
+            Anomaly("warning",
+                    "Orphaned memory file: feedback_mental_health.md",
+                    {"file": "feedback_mental_health.md"}),
+            Anomaly("warning",
+                    "Orphaned memory file: user_salary_negotiations.md",
+                    {"file": "user_salary_negotiations.md"}),
+        ]
+
+    def test_filenames_anonymized(self):
+        """Specific filenames must not appear in the report."""
+        with TestDir() as d:
+            make_index(d, [("A", "a.md", "desc")])
+            make_leaf(d, "a.md", "user", "A", "desc")
+            report = format_bug_report(self._make_anomalies(), d)
+            for name in self.SENSITIVE_NAMES:
+                self.assertNotIn(name, report,
+                                 f"Sensitive filename leaked: {name}")
+
+    def test_type_prefixes_present(self):
+        """Anonymized type prefixes should appear in the report."""
+        with TestDir() as d:
+            make_index(d, [("A", "a.md", "desc")])
+            make_leaf(d, "a.md", "user", "A", "desc")
+            report = format_bug_report(self._make_anomalies(), d)
+            self.assertIn("project_*.md", report)
+            self.assertIn("feedback_*.md", report)
+            self.assertIn("user_*.md", report)
+
+    def test_no_absolute_paths(self):
+        """Report must not contain absolute paths (leak usernames)."""
+        with TestDir() as d:
+            make_index(d, [("A", "a.md", "desc")])
+            make_leaf(d, "a.md", "user", "A", "desc")
+            report = format_bug_report(self._make_anomalies(), d)
+            self.assertNotIn(d, report,
+                             "Absolute memory dir path leaked")
+            self.assertNotIn(os.path.expanduser("~"), report,
+                             "Home directory path leaked")
+
+    def test_no_memory_content(self):
+        """Report must not contain memory file content."""
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A",
+                      "This is super secret content")
+            make_index(d, [("A", "a.md", "secret content")])
+            report = format_bug_report(self._make_anomalies(), d)
+            self.assertNotIn("super secret", report)
+            self.assertNotIn("secret content", report)
+
+    def test_exception_info_included(self):
+        """Exception tracebacks should still be included (no filenames)."""
+        with TestDir() as d:
+            make_index(d, [("A", "a.md", "desc")])
+            make_leaf(d, "a.md", "user", "A", "desc")
+            exc = "Traceback: KeyError in rebalance_index at line 42"
+            report = format_bug_report([], d, exception_info=exc)
+            self.assertIn("KeyError", report)
+            self.assertIn("line 42", report)
 
 
 if __name__ == "__main__":

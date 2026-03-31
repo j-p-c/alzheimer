@@ -1151,11 +1151,26 @@ def collect_anomalies(memory_dir, max_lines=DEFAULT_MAX_LINES,
     return anomalies
 
 
+def _anonymize_anomaly(message):
+    """Strip memory filenames from an anomaly message for public reports.
+
+    Filenames can encode sensitive topics (e.g. project_secret_deal.md).
+    Replaces specific filenames with type-based placeholders.
+    """
+    # Replace "some_name.md" with just the type prefix or "*.md"
+    return re.sub(
+        r'\b([a-z]+)_[a-zA-Z0-9_-]+\.md\b',
+        r'\1_*.md',
+        message
+    )
+
+
 def format_bug_report(anomalies, memory_dir, exception_info=None):
     """Format anomalies into a GitHub issue body.
 
-    Never includes personal memory content — only structural information
-    (file names, line counts, error messages).
+    Privacy-safe: never includes personal memory content or specific
+    filenames (which can encode sensitive topics). Only includes
+    aggregate counts, type prefixes, and structural metrics.
     """
     lines = [
         "## Anomaly Report",
@@ -1182,9 +1197,9 @@ def format_bug_report(anomalies, memory_dir, exception_info=None):
     ])
 
     for a in anomalies:
-        lines.append(f"- **{a.severity}**: {a.message}")
+        lines.append(f"- **{a.severity}**: {_anonymize_anomaly(a.message)}")
 
-    # Tree structure snapshot (filenames only, no content).
+    # Tree structure snapshot — aggregate counts only, no filenames.
     lines.extend([
         "",
         "## Tree Structure",
@@ -1199,16 +1214,22 @@ def format_bug_report(anomalies, memory_dir, exception_info=None):
                      f"{len(e)} entries")
         index_dir = os.path.join(memory_dir, "_index")
         if os.path.isdir(index_dir):
+            index_count = 0
+            total_entries = 0
+            total_bytes = 0
             for root, dirs, files in os.walk(index_dir):
                 for f in sorted(files):
                     if f.endswith(".md"):
                         fpath = os.path.join(root, f)
-                        rel = os.path.relpath(fpath, memory_dir)
                         _, fe = parse_index(fpath)
-                        lines.append(
-                            f"  {rel}: {len(fe)} entries, "
-                            f"{file_size_bytes(fpath)} bytes"
-                        )
+                        index_count += 1
+                        total_entries += len(fe)
+                        total_bytes += file_size_bytes(fpath)
+            lines.append(
+                f"  _index/: {index_count} index files, "
+                f"{total_entries} total entries, "
+                f"{total_bytes} bytes"
+            )
     lines.extend([
         "```",
         "",

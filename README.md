@@ -43,10 +43,20 @@ terms that stays pinned at the top of MEMORY.md.
 
 The glossary uses `type: glossary` frontmatter (a unique type that the
 rebalancer never moves to `_index/`). When the rebalancer detects the
-glossary is stale (missing or older than any memory file), it emits a
-`systemMessage` instructing Claude to read all memory files and rewrite
-`glossary.md` with 10-20 key terms and one-line definitions. Claude
-writes the glossary — not Python regexes.
+glossary is stale (missing or older than any memory file), it instructs
+Claude to read all memory files and rewrite `glossary.md` with 10-20
+key terms and one-line definitions. Claude writes the glossary — not
+Python regexes.
+
+### Inline content detection
+
+Some MEMORY.md files contain inline content (notes, commands, multi-line
+blocks) mixed between standard index entries. The rebalancer detects this
+and skips rebalancing to avoid data loss. If the file is over the limit,
+Claude is instructed to restructure it: move each inline block into a
+separate topic file with frontmatter, and replace it with a one-line
+index entry. If the file is under the limit, the inline content is noted
+but not treated as urgent.
 
 ### Early rebalancing
 
@@ -56,7 +66,7 @@ overflowing before the first rebalance.
 
 ## Installation
 
-You're running Claude Code — just tell Claude:
+Just tell Claude:
 
 > **"Install the alzheimer memory rebalancer from
 > github.com/j-p-c/alzheimer"**
@@ -71,9 +81,9 @@ models (Opus, Sonnet, Haiku).
 ### What Claude will do
 
 1. Clone this repo to a suitable location on your machine
-2. Run `python3 setup.py --install` (merges hooks into your
-   `~/.claude/settings.json` without disturbing existing settings,
-   then rebalances and verifies all existing memory directories)
+2. Run the installer (merges hooks into your `~/.claude/settings.json`
+   without disturbing existing settings, then runs a health check on
+   all existing memory directories)
 3. Seed a reference memory (`reference_alzheimer.md`) into each project
    memory directory so every Claude instance knows what "alzheimer" means
    and how to update, diagnose, and report bugs
@@ -85,12 +95,11 @@ start, and compaction. No further configuration needed.
 
 > **"Update alzheimer"**
 
-Claude will find the existing installation from your settings, pull the
-latest changes, and re-verify. Under the hood:
-
-1. Find the install directory by searching `~/.claude/settings.json` for
-   the path to `rebalance.py`
-2. Run `python3 setup.py --update` from that directory
+Claude will pull the latest changes, re-install hooks, and run a health
+check across all your memory directories. If the health check finds
+problems (inline content, over-limit files, broken references, orphaned
+files), Claude will fix them automatically before reporting the update
+as complete.
 
 ### Manual installation
 
@@ -105,94 +114,90 @@ python3 setup.py --check
 
 ## Usage
 
-### Manual
+Once installed, alzheimer runs automatically in the background. You
+don't need to do anything — the hooks handle everything. But if you
+want to check on things or troubleshoot, here's how.
+
+### Talking to Claude
+
+These are the most common things you can ask Claude to do:
+
+- **"Check my memory health"** — Claude will run the rebalancer and
+  report the current state of your memory tree.
+- **"Update alzheimer"** — Pull latest changes, re-install hooks, and
+  fix any problems found.
+- **"Diagnose my memory"** — Claude will run a structured diagnostic
+  and show you what (if anything) is wrong.
+- **"File an alzheimer bug report"** — Claude will collect diagnostic
+  information (file names, line counts, error messages — never personal
+  memory content) and ask whether you'd like to file it as a GitHub
+  issue. Filing is always optional and requires your confirmation.
+
+### What you'll see
+
+On every session start, you'll see a brief status line like:
+
+```
+alzheimer: 27/150 lines, 3/20 KB — balanced
+```
+
+This confirms the rebalancer is running and your memory tree is healthy.
+If there's a problem, Claude will tell you about it and offer to fix it.
+
+### Command-line reference
+
+For power users who want to run the tools directly:
 
 ```bash
 # Check current state (no changes)
-python3 rebalance.py ~/.claude/projects/*/memory/ --dry-run
+python3 rebalance.py /path/to/memory/ --dry-run
 
 # Rebalance
-python3 rebalance.py ~/.claude/projects/*/memory/
+python3 rebalance.py /path/to/memory/
 
 # Find orphaned memory files
-python3 rebalance.py ~/.claude/projects/*/memory/ --orphans
+python3 rebalance.py /path/to/memory/ --orphans
 
 # Verify tree integrity
-python3 rebalance.py ~/.claude/projects/*/memory/ --verify
+python3 rebalance.py /path/to/memory/ --verify
 
 # Custom limits
 python3 rebalance.py /path/to/memory/ --max-lines 100 --max-bytes 15000
 
-# Hook mode (JSON systemMessage output, used by hooks)
-python3 rebalance.py ~/.claude/projects/*/memory/ --hook
+# Hook mode (JSON output, used internally by hooks)
+python3 rebalance.py /path/to/memory/ --hook --hook-event PostToolUse
 
 # Diagnose issues (structured report, no file changes)
-python3 rebalance.py ~/.claude/projects/*/memory/ --diagnose
+python3 rebalance.py /path/to/memory/ --diagnose
 
 # File a bug report as a GitHub issue (requires gh CLI)
-python3 rebalance.py ~/.claude/projects/*/memory/ --report
+python3 rebalance.py /path/to/memory/ --report
 ```
 
-The `--hook` flag produces JSON `systemMessage` output that Claude sees
-as context. This is how the rebalancer communicates status (e.g.
-"27/150 lines, 3/20 KB — balanced") and glossary update requests to
-Claude without interrupting the conversation.
-
-### Automatic (recommended)
-
-Use the setup tool to configure hooks automatically:
+Setup tool:
 
 ```bash
-# Preview the hook configuration
-python3 setup.py
-
-# Install hooks into ~/.claude/settings.json (merges, doesn't replace)
-python3 setup.py --install
-
-# Verify hooks are installed correctly
-python3 setup.py --check
+python3 setup.py              # Preview hook configuration
+python3 setup.py --install    # Install hooks (merges, doesn't replace)
+python3 setup.py --check      # Verify hooks are installed correctly
+python3 setup.py --update     # Pull latest and re-install
+python3 setup.py --find       # Print install directory
 ```
 
-Or add hooks manually to `~/.claude/settings.json`:
+### Hooks
 
-```json
-{
-  "hooks": {
-    "PostToolUse": [{
-      "matcher": "Write|Edit",
-      "hooks": [{
-        "type": "command",
-        "command": "jq -r '(.tool_input.file_path // .tool_response.filePath) // empty' | { read -r f; echo \"$f\" | grep -q '/memory/' && python3 /path/to/rebalance.py \"$(dirname \"$f\")\" --hook 2>&1 | head -5; } || true",
-        "timeout": 15,
-        "statusMessage": "Checking memory balance..."
-      }]
-    }],
-    "SessionStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "for d in ~/.claude/projects/*/memory; do [ -f \"$d/MEMORY.md\" ] && python3 /path/to/rebalance.py \"$d\" --hook 2>&1; done || true",
-        "timeout": 15,
-        "statusMessage": "Rebalancing memory tree..."
-      }]
-    }],
-    "PreCompact": [{
-      "hooks": [{
-        "type": "command",
-        "command": "for d in ~/.claude/projects/*/memory; do [ -f \"$d/MEMORY.md\" ] && python3 /path/to/rebalance.py \"$d\" --hook 2>&1; done || true",
-        "timeout": 15,
-        "statusMessage": "Rebalancing memory tree before compact..."
-      }]
-    }]
-  }
-}
-```
+The hooks are installed automatically by `setup.py --install`. They
+ensure the tree rebalances:
 
-Replace `/path/to/rebalance.py` with the actual path.
-
-These hooks ensure the tree rebalances:
 - **After every memory write** (PostToolUse on Write|Edit)
-- **At session start** (including after compaction and /clear)
-- **Before compaction** (while there's still context to analyze)
+- **At session start** (SessionStart — including after /clear)
+- **Before compaction** (PreCompact — while there's still context)
+
+Each hook invokes `rebalance.py --hook --hook-event <event>` which
+produces a single JSON object on stdout. The `systemMessage` field
+is displayed in the Claude Code UI; `hookSpecificOutput.additionalContext`
+carries instructions for Claude (glossary updates, warnings) without
+cluttering your terminal.
 
 ## Design
 
@@ -216,25 +221,47 @@ See [DESIGN.md](DESIGN.md) for the full architecture, including:
 
 ## Bug Reporting
 
-If the rebalancer detects an anomaly (broken references, failed
-rebalance, unexpected state), it can generate a structured diagnostic
-report and optionally file it as a GitHub issue:
+If something goes wrong, tell Claude:
 
-```bash
-# See what's wrong
-python3 rebalance.py /path/to/memory/ --diagnose
+> **"Diagnose my memory"**
 
-# File as a GitHub issue (requires gh CLI, asks for confirmation)
-python3 rebalance.py /path/to/memory/ --report
+Claude will run a structured diagnostic and show you what's wrong. If
+you'd like to report the issue, tell Claude:
+
+> **"File an alzheimer bug report"**
+
+Claude will ask for your confirmation before filing. Reports are
+privacy-safe: they include only aggregate counts and structural metrics
+(line counts, entry counts, error types) — never personal memory content
+or specific filenames (which can encode sensitive topics). Here's an
+example of what a filed report looks like:
+
+```markdown
+## Anomaly Report
+
+**Rebalancer version:** 0.1.0
+**Python:** 3.14.3
+**Platform:** Darwin 25.4.0
+
+## Anomalies
+
+- **error**: MEMORY.md exceeds hard limit: 210 lines (max 200)
+- **error**: Broken reference: project_*.md
+- **warning**: Orphaned memory file: feedback_*.md
+
+## Tree Structure
+
+MEMORY.md: 210 lines, 6200 bytes, 45 entries
+  _index/: 3 index files, 82 total entries, 4500 bytes
 ```
 
-Reports include only structural information (file names, line counts,
-error messages) — never personal memory content. Filing is always
-optional and initiated by the user.
+Note how specific filenames are replaced with type prefixes
+(`project_*.md`, `feedback_*.md`) so the report reveals the kind of
+entry but not its topic.
 
-If the rebalancer crashes during a hook run, it outputs a JSON
-`systemMessage` suggesting the user run `--diagnose`. This surfaces
-in Claude's UI without interrupting the conversation.
+If the rebalancer crashes during a hook run, it outputs a status message
+suggesting you ask Claude to run a diagnosis. This surfaces in the UI
+without interrupting your conversation.
 
 ## Testing
 
@@ -243,7 +270,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-86 tests covering:
+91 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
@@ -257,12 +284,13 @@ python3 -m unittest test_rebalance -v
 - Edge cases (empty dirs, malformed files, unicode, concurrent writes)
 - Dry-run safety
 - Idempotency
-- Inline content detection (skip rebalance, preserve data, warn)
+- Inline content detection (skip rebalance, preserve data, threshold)
 - Hook CLI output format (single JSON, additionalContext routing)
 - Config file loading (.alzheimer.conf)
 - Limit resolution priority (CLI > config > defaults)
-- Glossary integration (staleness detection, parsing, pinning, systemMessage)
+- Glossary integration (staleness detection, parsing, pinning)
 - Early rebalancing (young tree threshold)
+- Bug report privacy (filename anonymization, no paths or content leaked)
 
 ## License
 
