@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the alzheimer memory rebalancer."""
 
+import json
 import os
 import shutil
 import tempfile
@@ -19,8 +20,13 @@ from rebalance import (
     LEAF_MAX_LINES,
     MIN_GROUP_SIZE,
     MAX_DEPTH,
+    UPDATE_CACHE_FILE,
+    UPDATE_CHECK_INTERVAL,
+    _read_update_cache,
+    _write_update_cache,
     build_glossary_entry,
     check_drift,
+    check_for_updates,
     collect_anomalies,
     collect_memory_files,
     count_inline_content,
@@ -1457,6 +1463,70 @@ class TestCheckAlias(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0)
             self.assertIn("All checks passed", result.stdout)
+
+
+class TestUpdateCheck(unittest.TestCase):
+    """Test update staleness detection and caching."""
+
+    def test_cache_roundtrip(self):
+        """Write and read cache file."""
+        with TestDir() as d:
+            cache = os.path.join(d, UPDATE_CACHE_FILE)
+            _write_update_cache(cache, 3)
+            ts, behind = _read_update_cache(cache)
+            self.assertEqual(behind, 3)
+            self.assertGreater(ts, 0)
+
+    def test_cache_missing(self):
+        """Missing cache returns zero."""
+        ts, behind = _read_update_cache("/nonexistent/path")
+        self.assertEqual(ts, 0)
+        self.assertEqual(behind, 0)
+
+    def test_cache_corrupt(self):
+        """Corrupt cache returns zero."""
+        with TestDir() as d:
+            cache = os.path.join(d, UPDATE_CACHE_FILE)
+            with open(cache, "w") as f:
+                f.write("not json")
+            ts, behind = _read_update_cache(cache)
+            self.assertEqual(ts, 0)
+            self.assertEqual(behind, 0)
+
+    def test_fresh_cache_skips_fetch(self):
+        """If cache is fresh, no fetch happens (returns cached result)."""
+        import time
+        with TestDir() as d:
+            # Needs a .git dir so the function doesn't bail early.
+            os.makedirs(os.path.join(d, ".git"))
+            cache = os.path.join(d, UPDATE_CACHE_FILE)
+            # Write a fresh cache saying 2 commits behind.
+            with open(cache, "w") as f:
+                json.dump({"timestamp": time.time(), "behind": 2}, f)
+            # Even though d isn't a real git repo, we should get the
+            # cached result without trying to fetch.
+            behind, msg = check_for_updates(alzheimer_dir=d)
+            self.assertEqual(behind, 2)
+            self.assertIn("2 new commit", msg)
+
+    def test_no_git_dir_skips(self):
+        """Non-git directory returns zero silently."""
+        with TestDir() as d:
+            behind, msg = check_for_updates(alzheimer_dir=d, force=True)
+            self.assertEqual(behind, 0)
+            self.assertIsNone(msg)
+
+    def test_up_to_date_no_message(self):
+        """When behind=0, message should be None."""
+        with TestDir() as d:
+            os.makedirs(os.path.join(d, ".git"))
+            cache = os.path.join(d, UPDATE_CACHE_FILE)
+            import time
+            with open(cache, "w") as f:
+                json.dump({"timestamp": time.time(), "behind": 0}, f)
+            behind, msg = check_for_updates(alzheimer_dir=d)
+            self.assertEqual(behind, 0)
+            self.assertIsNone(msg)
 
 
 class TestBugReportPrivacy(unittest.TestCase):

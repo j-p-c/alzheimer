@@ -387,6 +387,109 @@ def write_index(filepath, header, entries):
         f.write("\n".join(lines))
 
 
+# ── Update staleness check ────────────────────────────────────────────
+
+# How often to check for updates (seconds).  One fetch per day keeps
+# network overhead negligible while catching staleness within 24 hours.
+UPDATE_CHECK_INTERVAL = 86400  # 24 hours
+
+# Cache file storing the last check timestamp and result.
+UPDATE_CACHE_FILE = ".alzheimer.lastcheck"
+
+
+def _alzheimer_dir():
+    """Return the directory containing this script (the alzheimer repo)."""
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _read_update_cache(cache_path):
+    """Read the update cache file.  Returns (timestamp, behind_count) or
+    (0, 0) if the cache is missing or unreadable."""
+    try:
+        with open(cache_path) as f:
+            data = json.load(f)
+        return data.get("timestamp", 0), data.get("behind", 0)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return 0, 0
+
+
+def _write_update_cache(cache_path, behind):
+    """Write the update cache file."""
+    import time
+    try:
+        with open(cache_path, "w") as f:
+            json.dump({"timestamp": time.time(), "behind": behind}, f)
+    except OSError:
+        pass
+
+
+def check_for_updates(alzheimer_dir=None, force=False):
+    """Check if the local alzheimer repo is behind origin/main.
+
+    Returns (behind_count, message) where behind_count is the number of
+    commits behind, and message is a human-readable string (or None if
+    up to date or check was skipped).
+
+    Uses a cache file to avoid fetching more than once per
+    UPDATE_CHECK_INTERVAL seconds.  Pass force=True to ignore the cache.
+    """
+    import time
+
+    if alzheimer_dir is None:
+        alzheimer_dir = _alzheimer_dir()
+
+    # Is this a git repo?
+    git_dir = os.path.join(alzheimer_dir, ".git")
+    if not os.path.isdir(git_dir):
+        return 0, None
+
+    cache_path = os.path.join(alzheimer_dir, UPDATE_CACHE_FILE)
+    cached_ts, cached_behind = _read_update_cache(cache_path)
+
+    now = time.time()
+    if not force and (now - cached_ts) < UPDATE_CHECK_INTERVAL:
+        # Cache is fresh — return cached result without fetching.
+        if cached_behind > 0:
+            return cached_behind, (
+                f"alzheimer update available: {cached_behind} new "
+                f"commit(s) on origin/main. Tell the user and offer "
+                f"to run the update."
+            )
+        return 0, None
+
+    # Fetch from origin (quiet, timeout-safe).
+    try:
+        fetch = subprocess.run(
+            ["git", "fetch", "--quiet", "origin", "main"],
+            cwd=alzheimer_dir,
+            capture_output=True, text=True, timeout=10
+        )
+        if fetch.returncode != 0:
+            # Fetch failed (offline, no remote, etc.) — skip silently.
+            _write_update_cache(cache_path, 0)
+            return 0, None
+
+        # Count commits we're behind.
+        rev_list = subprocess.run(
+            ["git", "rev-list", "HEAD..origin/main", "--count"],
+            cwd=alzheimer_dir,
+            capture_output=True, text=True, timeout=5
+        )
+        behind = int(rev_list.stdout.strip()) if rev_list.returncode == 0 else 0
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        _write_update_cache(cache_path, 0)
+        return 0, None
+
+    _write_update_cache(cache_path, behind)
+
+    if behind > 0:
+        return behind, (
+            f"alzheimer update available: {behind} new commit(s) on "
+            f"origin/main. Tell the user and offer to run the update."
+        )
+    return 0, None
+
+
 # ── Drift detection ───────────────────────────────────────────────────
 
 # Leaf files over this many lines trigger a warning.  Individual memory
@@ -1587,7 +1690,8 @@ def main():
         # Build a brief summary for the user's UI.
         memory_md = os.path.join(memory_dir, "MEMORY.md")
         if os.path.exists(memory_md):
-            line_count = sum(1 for _ in open(memory_md))
+            with open(memory_md) as fh:
+                line_count = sum(1 for _ in fh)
             byte_count = os.path.getsize(memory_md)
             kb = f"{byte_count / 1024:.0f}"
 
@@ -1612,11 +1716,20 @@ def main():
         else:
             summary = "alzheimer: no MEMORY.md found"
 
+        # Check for alzheimer updates on SessionStart and PreCompact.
+        update_msg = None
+        if args.hook_event in ("SessionStart", "PreCompact"):
+            behind, update_msg = check_for_updates()
+            if behind > 0:
+                summary += " (update available)"
+
         # Build single JSON output: systemMessage for user's UI,
         # hookSpecificOutput.additionalContext for Claude's context.
         output = {"systemMessage": summary}
 
         additional = list(messages)
+        if update_msg:
+            additional.append(update_msg)
         if warnings:
             warn_summary = "; ".join(warnings)
             additional.append(

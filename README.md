@@ -204,6 +204,11 @@ files (on disk but not in any index) and oversized leaf files (over
 150 lines). If drift is detected, Claude receives instructions to fix
 the problems immediately — no waiting for the next `--verify` run.
 
+On session start and before compaction, the hooks also check whether
+a newer version of alzheimer is available on GitHub. If so, Claude
+will let you know and offer to update. The check is cached (at most
+once per day) to avoid slowing things down.
+
 ## Design
 
 See [DESIGN.md](DESIGN.md) for the full architecture, including:
@@ -275,7 +280,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-99 tests covering:
+105 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
@@ -297,6 +302,7 @@ python3 -m unittest test_rebalance -v
 - Early rebalancing (young tree threshold)
 - Bug report privacy (filename anonymization, no paths or content leaked)
 - Drift detection (orphans, oversized leaves, glossary exclusion, integration)
+- Update staleness check (cache roundtrip, expiry, no-git fallback)
 - CLI alias (--check for --verify)
 
 ## License

@@ -274,6 +274,21 @@ them immediately.
 entry comparison. It excludes `glossary.md` (managed by the rebalancer)
 and files in `_index/` (already checked by `rebalance_index()`).
 
+## Update Staleness Check
+
+On SessionStart and PreCompact hooks, the rebalancer checks whether the
+local alzheimer repo is behind `origin/main`. If updates are available,
+it appends `(update available)` to the user-visible status line and
+sends instructions to Claude via `additionalContext`.
+
+The check does a `git fetch` and `git rev-list HEAD..origin/main --count`,
+but caches the result in `.alzheimer.lastcheck` (gitignored). The cache
+expires after 24 hours, so network overhead is at most one fetch per day.
+If the fetch fails (offline, no remote), the check is silently skipped.
+
+The check runs on PreCompact (not just SessionStart) because long-lived
+sessions may run for days without restarting.
+
 ## Hook Mode (--hook)
 
 When invoked with `--hook`, the rebalancer produces a single JSON object
