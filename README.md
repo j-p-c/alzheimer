@@ -280,7 +280,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-105 tests covering:
+107 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
@@ -301,7 +301,7 @@ python3 -m unittest test_rebalance -v
 - Glossary integration (staleness detection, parsing, pinning)
 - Early rebalancing (young tree threshold)
 - Bug report privacy (filename anonymization, no paths or content leaked)
-- Drift detection (orphans, oversized leaves, glossary exclusion, integration)
+- Drift detection (orphan auto-indexing, dry-run safety, oversized leaves, glossary exclusion)
 - Update staleness check (cache roundtrip, expiry, no-git fallback)
 - CLI alias (--check for --verify)
 

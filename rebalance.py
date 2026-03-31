@@ -498,30 +498,73 @@ def check_for_updates(alzheimer_dir=None, force=False):
 LEAF_MAX_LINES = 150
 
 
-def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES):
-    """Lightweight check for orphaned files and oversized leaf files.
+def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
+    """Check for orphaned files and oversized leaf files.
 
     Runs after every rebalance (including no-op runs) to catch problems
-    that accumulate between --verify runs.  Returns a list of warning
-    strings suitable for additionalContext.
+    that accumulate between --verify runs.
+
+    Orphans with valid frontmatter (name + description) are auto-indexed
+    in MEMORY.md.  Orphans without frontmatter are reported as warnings
+    for Claude to handle manually.
+
+    Returns (actions, warnings) where actions are auto-fix descriptions
+    and warnings are unresolvable issues for additionalContext.
     """
+    actions = []
     warnings = []
 
     # Orphan check (exclude glossary — it's managed by the rebalancer).
     orphans = [o for o in find_orphans(memory_dir) if o != GLOSSARY_FILE]
     if orphans:
-        orphan_list = ", ".join(sorted(orphans)[:10])
-        more = f" (+{len(orphans) - 10} more)" if len(orphans) > 10 else ""
-        warnings.append(
-            f"DRIFT: {len(orphans)} orphaned memory file(s) found: "
-            f"{orphan_list}{more}. "
-            f"These files exist on disk but are not referenced in any "
-            f"index. They will be invisible to Claude until index "
-            f"entries are added. "
-            f"IMPORTANT: Read each orphaned file, then add a proper "
-            f"one-line index entry to MEMORY.md for each one: "
-            f"- [Title](filename.md) — short description"
-        )
+        memory_md = os.path.join(memory_dir, "MEMORY.md")
+        header, entries = parse_index(memory_md)
+        auto_indexed = []
+        manual_needed = []
+
+        for orphan in sorted(orphans):
+            filepath = os.path.join(memory_dir, orphan)
+            fm = read_all_frontmatter(filepath)
+            name = fm.get("name", "")
+            desc = fm.get("description", "")
+            if name and desc:
+                # Auto-index: construct entry from frontmatter.
+                entry = {
+                    "title": name,
+                    "path": orphan,
+                    "desc": desc,
+                    "raw": f"- [{name}]({orphan}) — {desc}",
+                }
+                if not dry_run:
+                    entries.append(entry)
+                auto_indexed.append(orphan)
+            else:
+                manual_needed.append(orphan)
+
+        if auto_indexed:
+            if not dry_run:
+                write_index(memory_md, header, entries)
+            names = ", ".join(auto_indexed[:10])
+            more = (f" (+{len(auto_indexed) - 10} more)"
+                    if len(auto_indexed) > 10 else "")
+            actions.append(
+                f"Auto-indexed {len(auto_indexed)} orphaned file(s): "
+                f"{names}{more}"
+            )
+
+        if manual_needed:
+            orphan_list = ", ".join(manual_needed[:10])
+            more = (f" (+{len(manual_needed) - 10} more)"
+                    if len(manual_needed) > 10 else "")
+            warnings.append(
+                f"DRIFT: {len(manual_needed)} orphaned memory file(s) "
+                f"without frontmatter: {orphan_list}{more}. "
+                f"These files have no name/description metadata, so "
+                f"the rebalancer cannot auto-index them. "
+                f"IMPORTANT: Read each file, then add a proper "
+                f"one-line index entry to MEMORY.md: "
+                f"- [Title](filename.md) — short description"
+            )
 
     # Oversized leaf file check.
     skip = {"MEMORY.md", GLOSSARY_FILE}
@@ -555,7 +598,7 @@ def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES):
             f"keeping only active/current content."
         )
 
-    return warnings
+    return actions, warnings
 
 
 # ── Main rebalance logic ──────────────────────────────────────────────
@@ -619,8 +662,10 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
         actions.extend(glossary_actions)
         messages.extend(glossary_messages)
         # Check for drift (orphans, oversized leaf files).
-        drift = check_drift(memory_dir, max_lines)
-        warnings.extend(drift)
+        drift_actions, drift_warnings = check_drift(
+            memory_dir, max_lines, dry_run)
+        actions.extend(drift_actions)
+        warnings.extend(drift_warnings)
         return actions, warnings, messages
 
     # Update glossary (always runs, even when tree is within limits).
@@ -686,8 +731,10 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                     actions.extend(sub_actions)
                     warnings.extend(sub_warns)
         # Check for drift (orphans, oversized leaf files).
-        drift = check_drift(memory_dir, max_lines)
-        warnings.extend(drift)
+        drift_actions, drift_warnings = check_drift(
+            memory_dir, max_lines, dry_run)
+        actions.extend(drift_actions)
+        warnings.extend(drift_warnings)
         return actions, warnings, messages
 
     size_info = f"{total_lines} lines, {total_bytes} bytes"
@@ -792,8 +839,10 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                 warnings.extend(sub_warns)
 
     # Check for drift (orphans, oversized leaf files).
-    drift = check_drift(memory_dir, max_lines)
-    warnings.extend(drift)
+    drift_actions, drift_warnings = check_drift(
+        memory_dir, max_lines, dry_run)
+    actions.extend(drift_actions)
+    warnings.extend(drift_warnings)
 
     return actions, warnings, messages
 

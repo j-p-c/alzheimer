@@ -263,12 +263,19 @@ MEMORY.md past the limit.
 
 ## Drift Detection
 
-Problems that the rebalancer can't fix itself — orphaned files (on disk
-but not in any index) and oversized leaf files (over 150 lines) — used
-to accumulate silently between `--verify` runs. Now `check_drift()` runs
-on every invocation (including no-op runs where MEMORY.md is within
-limits) and reports problems via `additionalContext` so Claude can fix
-them immediately.
+Problems that the rebalancer can't fix itself used to accumulate silently
+between `--verify` runs. Now `check_drift()` runs on every invocation
+(including no-op runs where MEMORY.md is within limits).
+
+**Orphan auto-indexing:** When `check_drift()` finds memory files not
+referenced by any index, it reads their frontmatter (`name` and
+`description` fields) and automatically adds index entries to MEMORY.md.
+This means Claude only needs to write the memory file — the rebalancer
+handles the indexing. Orphans without valid frontmatter are reported as
+warnings for Claude to handle manually.
+
+**Oversized leaf detection:** Leaf files over 150 lines are reported as
+warnings via `additionalContext` so Claude can trim or split them.
 
 `check_drift()` is intentionally lightweight: one directory listing plus
 entry comparison. It excludes `glossary.md` (managed by the rebalancer)

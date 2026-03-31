@@ -1362,37 +1362,69 @@ class TestHookCLIOutput(unittest.TestCase):
 
 
 class TestCheckDrift(unittest.TestCase):
-    """Test lightweight orphan + leaf-size detection in check_drift()."""
+    """Test orphan auto-indexing, leaf-size detection in check_drift()."""
 
     def test_no_drift(self):
-        """Clean tree produces no warnings."""
+        """Clean tree produces no actions or warnings."""
         with TestDir() as d:
             make_leaf(d, "a.md", "user", "A", "short")
             make_index(d, [("A", "a.md", "desc")])
-            warnings = check_drift(d)
+            actions, warnings = check_drift(d)
+            self.assertEqual(actions, [])
             self.assertEqual(warnings, [])
 
-    def test_orphan_detected(self):
-        """Unreferenced file produces orphan warning."""
+    def test_orphan_auto_indexed(self):
+        """Orphan with frontmatter is auto-indexed, not warned."""
         with TestDir() as d:
             make_leaf(d, "a.md", "user", "A")
-            make_leaf(d, "orphan.md", "user", "Orphan")
+            make_leaf(d, "orphan.md", "user", "Orphan", "Orphan desc")
             make_index(d, [("A", "a.md", "desc")])
-            warnings = check_drift(d)
-            self.assertEqual(len(warnings), 1)
-            self.assertIn("DRIFT", warnings[0])
-            self.assertIn("orphan.md", warnings[0])
+            actions, warnings = check_drift(d)
+            self.assertEqual(len(actions), 1)
+            self.assertIn("Auto-indexed", actions[0])
+            self.assertEqual(warnings, [])
+            # Verify it was actually added to MEMORY.md.
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            paths = [e["path"] for e in entries]
+            self.assertIn("orphan.md", paths)
 
-    def test_multiple_orphans(self):
-        """Multiple orphans reported in a single warning."""
+    def test_orphan_without_frontmatter_warns(self):
+        """Orphan without name/description triggers warning."""
         with TestDir() as d:
             make_leaf(d, "a.md", "user", "A")
-            make_leaf(d, "x.md", "user", "X")
-            make_leaf(d, "y.md", "user", "Y")
+            # Create a file with no frontmatter.
+            with open(os.path.join(d, "bare.md"), "w") as f:
+                f.write("Just some text, no frontmatter.\n")
             make_index(d, [("A", "a.md", "desc")])
-            warnings = check_drift(d)
+            actions, warnings = check_drift(d)
+            self.assertEqual(actions, [])
             self.assertEqual(len(warnings), 1)
-            self.assertIn("2 orphaned", warnings[0])
+            self.assertIn("without frontmatter", warnings[0])
+
+    def test_multiple_orphans_auto_indexed(self):
+        """Multiple orphans with frontmatter are all auto-indexed."""
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A")
+            make_leaf(d, "x.md", "user", "X", "X desc")
+            make_leaf(d, "y.md", "user", "Y", "Y desc")
+            make_index(d, [("A", "a.md", "desc")])
+            actions, warnings = check_drift(d)
+            self.assertEqual(len(actions), 1)
+            self.assertIn("2", actions[0])
+            self.assertEqual(warnings, [])
+
+    def test_dry_run_no_write(self):
+        """Dry run detects orphans but doesn't modify MEMORY.md."""
+        with TestDir() as d:
+            make_leaf(d, "a.md", "user", "A")
+            make_leaf(d, "orphan.md", "user", "Orphan", "Orphan desc")
+            make_index(d, [("A", "a.md", "desc")])
+            actions, warnings = check_drift(d, dry_run=True)
+            self.assertEqual(len(actions), 1)
+            # Verify MEMORY.md was NOT modified.
+            _, entries = parse_index(os.path.join(d, "MEMORY.md"))
+            paths = [e["path"] for e in entries]
+            self.assertNotIn("orphan.md", paths)
 
     def test_oversized_leaf_detected(self):
         """Leaf file over LEAF_MAX_LINES triggers warning."""
@@ -1403,7 +1435,7 @@ class TestCheckDrift(unittest.TestCase):
                 for i in range(LEAF_MAX_LINES + 10):
                     f.write(f"Line {i}\n")
             make_index(d, [("Big", "big.md", "desc")])
-            warnings = check_drift(d)
+            actions, warnings = check_drift(d)
             self.assertEqual(len(warnings), 1)
             self.assertIn("DRIFT", warnings[0])
             self.assertIn("big.md", warnings[0])
@@ -1417,19 +1449,19 @@ class TestCheckDrift(unittest.TestCase):
                 for i in range(LEAF_MAX_LINES):
                     f.write(f"Line {i}\n")
             make_index(d, [("OK", "ok.md", "desc")])
-            warnings = check_drift(d)
+            actions, warnings = check_drift(d)
             self.assertEqual(warnings, [])
 
-    def test_drift_flows_through_rebalance(self):
-        """Drift warnings appear in rebalance() output."""
+    def test_auto_index_flows_through_rebalance(self):
+        """Auto-indexed orphans appear in rebalance() actions."""
         with TestDir() as d:
             make_leaf(d, "a.md", "user", "A")
-            make_leaf(d, "orphan.md", "user", "Orphan")
+            make_leaf(d, "orphan.md", "user", "Orphan", "desc")
             make_index(d, [("A", "a.md", "desc")])
             actions, warnings, messages = rebalance(d)
             self.assertTrue(
-                any("DRIFT" in w for w in warnings),
-                "Drift warning should flow through rebalance()"
+                any("Auto-indexed" in a for a in actions),
+                "Auto-index action should flow through rebalance()"
             )
 
     def test_glossary_not_flagged(self):
@@ -1443,7 +1475,8 @@ class TestCheckDrift(unittest.TestCase):
                 f.write("---\ntype: glossary\n---\n")
                 for i in range(200):
                     f.write(f"- **Term{i}** — definition\n")
-            warnings = check_drift(d)
+            actions, warnings = check_drift(d)
+            self.assertEqual(actions, [])
             self.assertEqual(warnings, [])
 
 
