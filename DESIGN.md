@@ -1,4 +1,4 @@
-# Alzheimer: Self-Balancing Hierarchical Memory for Claude Code
+# Alzheimer: self-balancing hierarchical memory for Claude Code
 
 ## Problem
 
@@ -31,7 +31,7 @@ MEMORY.md                          (root index, ≤150 lines)
 └── ...
 ```
 
-### Design Principles
+### Design principles
 
 1. **Root stays small.** MEMORY.md must NEVER exceed 150 lines (headroom
    below the 200-line hard cap). When it would exceed this, entries are
@@ -60,7 +60,7 @@ MEMORY.md                          (root index, ≤150 lines)
    efforts, the `_index/` directory structure allows rediscovery by
    scanning the filesystem.
 
-## Tree Conventions
+## Tree conventions
 
 ### Index files vs leaf files
 
@@ -95,7 +95,7 @@ max_lines: 150
 ---
 ```
 
-## Rebalancing Algorithm
+## Rebalancing algorithm
 
 ```
 rebalance(index_file, max_lines=150):
@@ -133,7 +133,7 @@ the parent index. This prevents over-fragmentation.
 3. **Before compaction.** The existing PreCompact hook already saves
    unsaved context; we add a rebalance step.
 
-## Trigger Mechanism
+## Trigger mechanism
 
 The rebalancer is a Python script (`rebalance.py`) invoked by hooks:
 
@@ -156,7 +156,7 @@ correct absolute path for your machine. The `--hook-event` flag tells
 the rebalancer which hook triggered it, enabling event-specific behavior
 (e.g., suppressing glossary updates on SessionStart).
 
-## Size Budget
+## Size budget
 
 With 150-line indices and 3-entry minimum groups:
 
@@ -168,7 +168,7 @@ With 150-line indices and 3-entry minimum groups:
 
 Depth 2 should suffice for any realistic Claude Code project.
 
-## Key Terms Glossary
+## Key terms glossary
 
 Important terms (proper nouns, project names, people) get lost after
 Claude Code conversation compaction because the rebalancer treats all
@@ -188,7 +188,7 @@ updated: 2026-03-29
 terms: 15
 ---
 
-# Key Terms
+# Key terms
 
 - **Project Alpha** — the main deployment target for billing services
 - **Server Omega** — CI/CD build server in the staging environment
@@ -253,7 +253,7 @@ A post-rebalance verification also checks whether the file is still over
 limits after a successful rebalance (e.g., due to an oversized header).
 If so, it warns with restructuring instructions.
 
-## Early Rebalancing
+## Early rebalancing
 
 Young trees (no `_index/` directory yet) are at higher risk of
 overflowing before the first rebalance. When `is_young_tree()` detects
@@ -261,7 +261,7 @@ there is no `_index/` directory, the rebalancer triggers at 50% of the
 normal threshold. This prevents a burst of new memories from pushing
 MEMORY.md past the limit.
 
-## Drift Detection
+## Drift detection
 
 Problems that the rebalancer can't fix itself used to accumulate silently
 between `--verify` runs. Now `check_drift()` runs on every invocation
@@ -281,7 +281,7 @@ warnings via `additionalContext` so Claude can trim or split them.
 entry comparison. It excludes `glossary.md` (managed by the rebalancer)
 and files in `_index/` (already checked by `rebalance_index()`).
 
-## Update Staleness Check
+## Update staleness check
 
 On SessionStart and PreCompact hooks, the rebalancer checks whether the
 local alzheimer repo is behind `origin/main`. If updates are available,
@@ -296,7 +296,7 @@ If the fetch fails (offline, no remote), the check is silently skipped.
 The check runs on PreCompact (not just SessionStart) because long-lived
 sessions may run for days without restarting.
 
-## Hook Mode (--hook)
+## Hook mode (`--hook`)
 
 When invoked with `--hook`, the rebalancer produces a single JSON object
 on stdout. The optional `--hook-event` flag specifies which Claude Code
@@ -328,7 +328,7 @@ This is how the rebalancer communicates:
 
 Without `--hook`, output is plain text suitable for manual use.
 
-## Reference Memory Seeding
+## Reference memory seeding
 
 On install or update, `setup.py` writes a `reference_alzheimer.md` file
 into each project memory directory (`~/.claude/projects/*/memory/`).
@@ -354,7 +354,207 @@ paths.
   the standard flat system. An instance that doesn't understand
   categories will see them as normal entries pointing to readable files.
 
-## Historical Memory (in development)
+## Guardrails (in development)
+
+### Problem
+
+Claude Code suffers from **permission drift**: after a user approves
+several consecutive actions ("yes", "yes", "yes"), Claude begins to
+assume future actions are also approved and stops asking. This is an
+emergent behavioral pattern, not a deliberate feature — and it can
+lead to destructive or irreversible actions being taken without
+confirmation. This is arguably the most dangerous failure mode in
+Claude's operational model, raising policy and compliance risk to
+potentially unacceptable levels for many organizations.
+
+Beyond permission drift, users need a way to express durable rules
+("never push to main without asking", "never delete production
+branches") that persist across conversations and survive compaction.
+Currently, such rules can only be expressed in `CLAUDE.md` files or
+memory entries — both of which are attention-based (Claude must notice
+and follow them) with no mechanical enforcement.
+
+### Solution: two-layer guardrails
+
+Guardrails uses two complementary layers:
+
+1. **Soft layer (attention-based):** A `guardrails.md` file pinned in
+   `MEMORY.md`, similar to the glossary. Claude writes and maintains it.
+   Contains user-stated rules in natural language.
+2. **Hard layer (hook-based):** A `PreToolUse` hook that mechanically
+   blocks dangerous operations by pattern-matching tool names and
+   arguments. Returns non-zero to prevent execution — Claude cannot
+   override this.
+
+The soft layer catches nuanced, context-dependent rules. The hard
+layer catches clear-cut violations that should never happen regardless
+of context.
+
+### Soft layer: guardrails.md
+
+#### Format
+
+```markdown
+---
+type: guardrails
+updated: 2026-03-31
+rules: 5
+---
+
+# Guardrails
+
+- **Never push without asking** — always confirm before `git push`
+  to any remote, every time, regardless of prior approvals
+- **Never delete branches without asking** — confirm before
+  `git branch -D` or `git push --delete`
+- **No force-push** — `git push --force` is blocked; use
+  `--force-with-lease` if absolutely necessary, and confirm first
+- **No secrets in public repos** — never commit .env, credentials,
+  or personal memory content to public repositories
+- **Update docs with code** — when pushing code changes, review and
+  update README/DESIGN docs in the same commit
+```
+
+#### Lifecycle
+
+When the user says something like "NEVER do X without asking me" or
+"always confirm before Y", Claude recognizes this as a guardrail and
+adds it to `guardrails.md`. This is analogous to how Claude adds
+memory entries, but guardrails are specifically about **behavioral
+constraints**.
+
+The rebalancer treats `type: guardrails` the same way it treats
+`type: glossary` — it is never moved to `_index/`, always stays
+pinned in the root `MEMORY.md`. Staleness detection works identically:
+if the file's mtime is older than any memory file that references
+behavioral rules, Claude is instructed to review and update it.
+
+#### Relationship to memory
+
+Some guardrails originate as feedback memories (e.g.,
+`feedback_no_push_without_asking.md`). The guardrails file is a
+**consolidated, authoritative list** — the single place Claude checks
+before taking any action. Individual feedback memories provide the
+*why* (context, history); `guardrails.md` provides the *what* (the
+rule itself, in imperative form).
+
+### Hard layer: PreToolUse hook
+
+#### Mechanism
+
+Claude Code's `PreToolUse` hook fires before every tool invocation.
+The hook receives the tool name and input as JSON on stdin. If the
+hook exits with a non-zero status, the tool call is **blocked** —
+Claude cannot proceed with that action.
+
+The guardrails hook (`guardrails.py`) pattern-matches against a
+configurable set of rules:
+
+```python
+HARD_RULES = [
+    {
+        "tool": "Bash",
+        "pattern": r"git\s+push\b",
+        "action": "block",
+        "message": "git push blocked by guardrails — ask the user first"
+    },
+    {
+        "tool": "Bash",
+        "pattern": r"git\s+push\s+.*--force\b",
+        "action": "block",
+        "message": "force-push blocked by guardrails"
+    },
+    {
+        "tool": "Bash",
+        "pattern": r"rm\s+-rf\s+/",
+        "action": "block",
+        "message": "recursive delete of root blocked by guardrails"
+    },
+]
+```
+
+#### Hook configuration
+
+The hook is installed by `setup.py` alongside the existing rebalancer
+hooks:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Bash",
+      "hooks": [{
+        "type": "command",
+        "command": "python3 /path/to/guardrails.py"
+      }]
+    }]
+  }
+}
+```
+
+The hook reads tool input from stdin, checks it against `HARD_RULES`,
+and either exits 0 (allow) or exits 1 with a JSON error message
+(block). Blocked actions surface in Claude's context as hook failures,
+prompting Claude to ask the user for explicit confirmation.
+
+#### Configurable rules
+
+Hard rules are loaded from a `.guardrails.conf` file (if present) in
+the alzheimer install directory, allowing users to customize which
+operations are blocked. The default set covers the most dangerous
+patterns identified in practice.
+
+```json
+{
+  "rules": [
+    {"tool": "Bash", "pattern": "git\\s+push\\b", "action": "block"},
+    {"tool": "Bash", "pattern": "rm\\s+-rf", "action": "block"}
+  ]
+}
+```
+
+### Interaction between the layers
+
+The two layers serve different purposes and do not overlap:
+
+| | Soft (`guardrails.md`) | Hard (`PreToolUse` hook) |
+|---|---|---|
+| **Enforcement** | Attention-based (Claude reads) | Mechanical (hook blocks) |
+| **Scope** | Nuanced, context-dependent rules | Clear-cut, always-block patterns |
+| **Bypassable** | Yes (permission drift risk) | No (exits non-zero) |
+| **Examples** | "Update docs when pushing code" | Block `git push` without prior user message containing "push" |
+| **Written by** | Claude | `setup.py` / config file |
+| **Failure mode** | Claude forgets or deprioritizes | False positive (blocks legitimate action) |
+
+The hard layer is the safety net for when the soft layer fails. The
+soft layer handles everything the hard layer can't express as a regex.
+
+### Integration with the rebalancer
+
+- `type: guardrails` is added to the rebalancer's pinned types
+  (alongside `type: glossary`), so it is never moved to `_index/`.
+- Staleness detection follows the same pattern as glossary: compare
+  mtime against memory files, emit update instructions when stale.
+- The guardrails entry in `MEMORY.md` summarizes the active rules:
+
+```markdown
+- [Guardrails](guardrails.md) — no push without asking, no force-push, no secrets in public repos, ...
+```
+
+### Open questions (guardrails)
+
+- **Smart blocking:** Can the hard hook be made context-aware? For
+  example, allowing `git push` only if the user's most recent message
+  contained the word "push." This would require the hook to read
+  recent conversation context, adding complexity.
+- **Rule discovery:** Should Claude proactively suggest guardrails
+  when it observes risky patterns, or only add them when the user
+  explicitly states a rule?
+- **Per-project rules:** Some guardrails are global (never push
+  without asking), others are project-specific (this repo is public,
+  no secrets). How to handle the distinction.
+
+## Historical memory (in development)
 
 ### Problem
 
@@ -384,7 +584,7 @@ These two facts mean we can build a structured, persistent conversation
 history that Claude maintains incrementally — **before** the compaction
 cliff is reached.
 
-### Solution: Log-Structured Merge Summarization
+### Solution: log-structured merge summarization
 
 Borrow the merge strategy from LSM trees (Log-Structured Merge trees,
 O'Neil et al. 1996) to build a logarithmically-compressed history of
@@ -399,7 +599,7 @@ The core algorithm:
 3. When two summaries exist at the **same level**, **merge** them into a
    single summary of the same target size S.
 4. The active historical memory at any point is the set of **un-merged
-   summaries** — at most log₂(n) files for n chunks.
+   summaries** — at most $\log_2(n)$ files for n chunks.
 
 ### Binary counting correspondence
 
@@ -417,7 +617,7 @@ written in binary, tells you exactly which summary levels are active.
 | 7      | 111    | summary-0-3, summary-4-5, summary-6           |
 | 8      | 1000   | summary-0-7                                   |
 
-Each merge doubles the time span covered while keeping the file size
+Each merge doubles the volume of logs covered while keeping the file size
 constant at ~S bytes. The result: recent history at high resolution,
 older history at progressively lower resolution. This matches the actual
 utility curve — what you discussed yesterday matters more than what you
@@ -446,15 +646,15 @@ self-evident from a directory listing.
 
 ### Key properties
 
-- **Logarithmic total size.** At most log₂(n) summary files, each ~S
+- **Logarithmic total size.** At most $\log_2(n)$ summary files, each ~S
   bytes. For 1000 chunks (~100 MB of conversation), that's ~10 files
   totaling ~500 KB.
 - **Amortized O(1) merges per chunk.** Each chunk participates in at
-  most log₂(n) merges over its entire lifetime, spread across future
+  most $\log_2(n)$ merges over its entire lifetime, spread across future
   chunk arrivals. The expected merge cost per new chunk is constant.
-- **Never re-process old data.** After chunk 2^k is processed, chunks
-  0 through 2^k-1 are never read again. All their information is
-  captured in summary-0-{2^k-1}.md.
+- **Never re-process old data.** After chunk $2^k$ is processed, chunks
+  $0$ through $2^k - 1$ are never read again. All their information is
+  captured in `summary-0-{2^k-1}.md`.
 - **Incremental injection.** Every merge operation requires Claude to
   read two summaries and produce a synthesis. This naturally injects
   historical context into the active conversation.
@@ -466,7 +666,7 @@ self-evident from a directory listing.
 
 For an existing Claude installation with extensive conversation history,
 the full history must be processed once. For 81 MB of transcripts
-(~810 chunks at C=100KB), this is a significant but one-time cost.
+(~810 chunks at C = 100 KB), this is a significant but one-time cost.
 
 Initialization walks **backwards** through conversation history (newest
 first). This means:
@@ -498,11 +698,11 @@ when a new chunk boundary is crossed.
 ### Session start / post-compaction bootstrap
 
 On a cold start (new session or after compaction), Claude has no
-historical context beyond what MEMORY.md provides. The SessionStart
+historical context beyond what `MEMORY.md` provides. The SessionStart
 hook loads the top-level summary pointers from `state.json` and
 instructs Claude to read them.
 
-For 810 chunks, the active set is at most log₂(810) ≈ 10 summary files.
+For 810 chunks, the active set is at most $\log_2(810) \approx 10$ summary files.
 At ~50 KB each, that's ~500 KB of historical context injected on startup
 — covering the entire conversation history at varying resolution.
 
@@ -516,7 +716,9 @@ directly observable at runtime.
 known amounts of summary text and observes when compaction triggers.
 This directly measures the effective window size without needing to
 know the theoretical number. The calibration result is cached in
-`state.json` and only needs to run once.
+`state.json` keyed by model name. If the model changes between
+sessions (e.g., switching from Sonnet to Opus), the cached result is
+invalid and calibration re-runs automatically.
 
 The target summary size S and chunk size C can then be tuned so that
 the full summary tree fits within budget while maximizing coverage
@@ -527,7 +729,7 @@ and resolution.
 Historical memory and the existing alzheimer memory tree serve
 different purposes:
 
-| | Memory tree (MEMORY.md) | Historical memory |
+| | Memory tree (`MEMORY.md`) | Historical memory |
 |---|---|---|
 | **Contains** | Facts, preferences, decisions | Narrative context, discussion flow |
 | **Retention** | Indefinite, full fidelity | Logarithmic decay with age |
@@ -540,7 +742,7 @@ decided*. Historical memory captures *how we got there* — the reasoning,
 the side conversations, the exploratory discussions that inform future
 work but don't warrant a permanent memory entry.
 
-### Open questions
+### Open questions (historical memory)
 
 - **Subagent log weaving.** Conversation directories contain subagent
   transcripts in subdirectories. These need to be woven into the main
@@ -557,7 +759,7 @@ work but don't warrant a permanent memory entry.
   from running as background agents to avoid displacing the user's active
   work.
 
-## File Layout
+## File layout
 
 ```
 alzheimer/

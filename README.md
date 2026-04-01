@@ -1,4 +1,4 @@
-# Alzheimer: Self-Balancing Hierarchical Memory for Claude Code
+# Alzheimer: self-balancing hierarchical memory for Claude Code
 
 Claude Code's auto memory system stores notes in a flat index file
 (`MEMORY.md`) capped at 200 lines / 25KB. When it overflows, entries at
@@ -229,7 +229,48 @@ See [DESIGN.md](DESIGN.md) for the full architecture, including:
   flat MEMORY.md. Category pointers are valid markdown links to readable
   files.
 
-## Bug Reporting
+## Usage philosophy
+
+There is no single "correct" way to use Claude Code. Some people run
+many short-lived instances across different directories, each handling
+a small task. Others run a single long-lived instance as an ongoing
+collaborator. Claude Code itself is agnostic — it works either way.
+
+Alzheimer is opinionated: it is designed for **long-lived, persistent
+collaboration**. It assumes you want Claude to remember everything —
+not just facts and decisions, but the flow of work, the reasoning
+behind choices, the side conversations that inform future direction.
+Every feature in alzheimer optimizes for context preservation over
+token efficiency:
+
+- **Memory rebalancing** keeps your knowledge base structured as it
+  grows, instead of letting it overflow and silently lose entries.
+- **Drift detection** catches problems continuously, not just when
+  you think to check.
+- **Guardrails** *(in development)* enforce behavioral rules that
+  persist across conversations — because a long-lived collaborator
+  needs durable constraints, not just per-session instructions.
+- **Historical memory** *(in development)* maintains a logarithmically
+  compressed summary of your entire conversation history, so context
+  degrades gracefully with age instead of falling off a cliff at
+  compaction time.
+
+Claude Code's built-in `/clear` command — and the idle-return prompt
+that nudges you to `/clear` after 75+ minutes away — optimize for the
+opposite end of the spectrum: short tasks, clean context, minimal
+carry-over. That's a
+valid approach for isolated work. But for ongoing projects where "why
+did we do X three weeks ago" matters, where preferences and decisions
+compound over time, and where the cost of lost context is measured in
+re-explained requirements and repeated mistakes — that approach falls
+short.
+
+If you use Claude Code as a long-running partner on evolving projects,
+alzheimer is built for you. If you prefer short, isolated sessions,
+alzheimer still works (it keeps your memory tree healthy regardless),
+but features like historical memory won't have much to work with.
+
+## Bug reporting
 
 If something goes wrong, tell Claude:
 
