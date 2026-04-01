@@ -759,6 +759,93 @@ work but don't warrant a permanent memory entry.
   from running as background agents to avoid displacing the user's active
   work.
 
+## Post-mortem (in development)
+
+### Problem
+
+When something goes wrong in a Claude Code collaboration — a promised
+action never happened, a decision was made for unclear reasons, or a
+chain of delegated tasks broke silently — there is no structured way
+to investigate. The user can scroll through their terminal, but
+compaction may have destroyed the relevant context. The raw JSONL
+conversation logs contain everything, but they are large, interleaved
+with subagent transcripts, and not human-readable.
+
+The result: accountability gaps. "What did we agree to do?" and "Where
+did the chain break?" become unanswerable questions once the
+conversation context is gone.
+
+### Solution: structured incident review
+
+Post-mortem provides a structured process for investigating past
+conversations. It builds on historical memory's infrastructure —
+summary files for fast scanning, raw JSONL logs for precise
+reconstruction — and adds a focused investigation workflow.
+
+### How it works
+
+1. **Start from historical memory.** The LSM-tree summaries provide a
+   timeline of all past conversations at varying resolution. Claude
+   scans these to locate the relevant time period and narrow down which
+   sessions contain the incident.
+
+2. **Drill into raw logs.** Once the relevant sessions are identified,
+   Claude reads the JSONL transcript files directly. These contain
+   every message, tool call, and tool result — a complete record of
+   what happened.
+
+3. **Weave subagent timelines.** Conversation directories contain
+   subagent transcripts in subdirectories. The post-mortem process
+   interleaves these by wall-clock timestamp to reconstruct the full
+   picture, including work that was delegated to background agents.
+
+4. **Produce a structured report.** The output is a timeline showing:
+   - What was discussed and decided
+   - What actions were promised
+   - What actions were actually taken (tool calls)
+   - Where the chain broke (promised but not done, or done incorrectly)
+   - Root cause analysis (compaction loss, permission drift, missed
+     handoff, etc.)
+
+### Invocation
+
+The user asks Claude to investigate:
+
+> **"Do a post-mortem on why the payment branches got merged together"**
+> **"What happened with the scheduled job we set up last week?"**
+> **"When did we decide to change the API format, and why?"**
+
+Claude uses the historical memory summaries to find the right time
+window, then drills into raw logs as needed. No special syntax or
+commands required — just a natural-language request.
+
+### Relationship to other features
+
+| Feature | Role in post-mortem |
+|---|---|
+| **Historical memory** | Fast timeline scanning — locate the incident |
+| **Raw JSONL logs** | Precise reconstruction — exact messages and tool calls |
+| **Memory files** | Cross-reference — what was saved vs. what was discussed |
+| **Guardrails** | Prevention — post-mortems may identify new guardrail rules |
+
+Post-mortem is a read-only operation: it investigates but does not
+modify any files. However, its findings may lead to new guardrails
+("we should block X without confirmation") or new memory entries
+("save the decision about Y so it survives compaction").
+
+### Open questions (post-mortem)
+
+- **Privacy boundaries.** Post-mortem reads raw conversation logs,
+  which may contain sensitive content. Should there be scoping
+  controls ("only look at conversations about topic X")?
+- **Cross-instance investigation.** If the incident spans Personal
+  Claude and Work Claude (different machines, different logs), the
+  post-mortem can only see one side. How to handle this?
+- **Efficiency.** Raw JSONL logs are large. For an 81 MB history,
+  reading the relevant sessions directly may consume significant
+  context. Historical memory summaries help narrow the search, but
+  the drill-down step needs careful budgeting.
+
 ## File layout
 
 ```
