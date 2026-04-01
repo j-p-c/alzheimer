@@ -11,6 +11,8 @@ limits at every level.
 
 ## How it works
 
+(More detail is available in [DESIGN.md](DESIGN.md).)
+
 ```
 MEMORY.md                          (root: always under 150 lines)
 ├── _index/projects.md             (category index)
@@ -26,11 +28,11 @@ MEMORY.md                          (root: always under 150 lines)
 └── reference_github.md            (leaf: too few to categorize)
 ```
 
-When MEMORY.md grows past the limit:
+When `MEMORY.md` grows past the limit:
 
 1. Entries are grouped by type (user, feedback, project, reference)
 2. Groups of 3+ entries are pushed into category index files in `_index/`
-3. MEMORY.md gets a single-line pointer per category with a count and
+3. `MEMORY.md` gets a single-line pointer per category with a count and
    summary
 4. If a category index overflows, entries are split by topic keyword
 5. This repeats recursively — the tree grows in depth, not width
@@ -39,7 +41,7 @@ When MEMORY.md grows past the limit:
 
 Important terms (proper nouns, project names, people) tend to get lost
 after Claude Code compaction. Alzheimer maintains a **glossary** of key
-terms that stays pinned at the top of MEMORY.md.
+terms that stays pinned at the top of `MEMORY.md`.
 
 The glossary uses `type: glossary` frontmatter (a unique type that the
 rebalancer never moves to `_index/`). When the rebalancer detects the
@@ -50,7 +52,7 @@ Python regexes.
 
 ### Inline content detection
 
-Some MEMORY.md files contain inline content (notes, commands, multi-line
+Some `MEMORY.md` files contain inline content (notes, commands, multi-line
 blocks) mixed between standard index entries. The rebalancer detects this
 and skips rebalancing to avoid data loss. If the file is over the limit,
 Claude is instructed to restructure it: move each inline block into a
@@ -63,6 +65,12 @@ but not treated as urgent.
 Young memory trees (no `_index/` directory yet) trigger rebalancing at
 50% of the normal threshold. This prevents a burst of new memories from
 overflowing before the first rebalance.
+
+### In development
+
+- **Guardrails:** prevents permission drift and ensures that Claude abides by "NEVER" types of rules
+- **Historical memory:** fixes memory losses after compactions by more closely emulating human memory
+- **Post-mortem:** teaches Claude how to efficiently but comprehensively answer "Why did..." questions
 
 ## Installation
 
@@ -209,15 +217,6 @@ a newer version of Alzheimer is available on GitHub. If so, Claude
 will let you know and offer to update. The check is cached (at most
 once per day) to avoid slowing things down.
 
-## Design
-
-See [DESIGN.md](DESIGN.md) for the full architecture, including:
-- Tree conventions and entry format
-- Rebalancing algorithm
-- Size budgets (depth 2 handles ~7,500 entries)
-- Auto Dream compatibility
-- Graceful degradation
-
 ## Compatibility
 
 - **Auto Dream**: If Auto Dream flattens the tree during consolidation,
@@ -226,7 +225,7 @@ See [DESIGN.md](DESIGN.md) for the full architecture, including:
 - **Existing memories**: Migration is non-destructive. Leaf files stay
   where they are. Only index files change.
 - **Other Claude instances**: The tree degrades gracefully to standard
-  flat MEMORY.md. Category pointers are valid markdown links to readable
+  flat `MEMORY.md`. Category pointers are valid markdown links to readable
   files.
 
 ## Usage philosophy
@@ -321,7 +320,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-107 tests covering:
+144 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
@@ -345,6 +344,9 @@ python3 -m unittest test_rebalance -v
 - Drift detection (orphan auto-indexing, dry-run safety, oversized leaves, glossary exclusion)
 - Update staleness check (cache roundtrip, expiry, no-git fallback)
 - CLI alias (--check for --verify)
+- Guardrails soft layer (staleness, parsing, pinning, system messages)
+- Guardrails hard layer (block rules, custom rules, pattern matching)
+- Guardrails confirm mode (self-allowlist, config manipulation, try/finally restoration)
 
 ## Concurrency
 
@@ -352,7 +354,7 @@ Running multiple Claude instances in different directories is fine —
 each gets its own memory tree. Running multiple instances in the **same
 directory** is generally an anti-pattern (Claude Code itself has no
 concurrency model for shared memory). Alzheimer makes this slightly
-worse: the rebalancer does read-modify-write on MEMORY.md without file
+worse: the rebalancer does read-modify-write on `MEMORY.md` without file
 locking, so simultaneous hook runs could clobber each other's writes.
 In practice the risk is low (the rebalancer runs in under a second),
 but if you need concurrent access, be aware of this limitation.
