@@ -67,7 +67,7 @@ MEMORY.md                          (root index, ≤150 lines)
 - **Index files** live in `_index/` subdirectory and contain only
   pointers to other files (no detailed content).
 - **Leaf files** live in the memory root directory (current behavior).
-- MEMORY.md is the root index.
+- `MEMORY.md` is the root index.
 
 ### Entry format (same at every level)
 
@@ -583,6 +583,25 @@ Two key capabilities make a workaround possible:
 These two facts mean we can build a structured, persistent conversation
 history that Claude maintains incrementally — **before** the compaction
 cliff is reached.
+
+### Biological analogy
+
+The algorithm below closely parallels **sleep-dependent memory
+consolidation** in neuroscience. During sleep, the hippocampus
+replays recent experiences and progressively transfers them into
+neocortical long-term storage at decreasing resolution — recent
+memories are vivid and detailed, older memories are compressed into
+gist and schema. This is a logarithmic process: last night's events
+are replayed in near-full fidelity, last month's are abstracted into
+broader patterns.
+
+Claude Code's built-in Auto Dream feature takes its name from this
+analogy, but its implementation is closer to someone panic-cleaning a
+desk by throwing things in drawers — a periodic bulk operation that
+prunes and flattens. Historical memory aims for actual consolidation
+with structure preservation: incremental, continuous, and with
+resolution that degrades gracefully with age rather than falling off
+a cliff.
 
 ### Solution: log-structured merge summarization
 
