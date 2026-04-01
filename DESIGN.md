@@ -354,6 +354,209 @@ paths.
   the standard flat system. An instance that doesn't understand
   categories will see them as normal entries pointing to readable files.
 
+## Historical Memory (in development)
+
+### Problem
+
+Claude Code's conversation compaction is a cliff-edge: when the context
+window fills, older messages are summarized by a model call that the user
+and alzheimer have no control over. The summary is lossy — it tends to
+preserve the "main work thread" but drop side conversations, active
+discussion topics, stated preferences, and reasoning context. Each
+successive compaction compounds the loss.
+
+Meanwhile, full conversation transcripts are preserved on disk as JSONL
+files in `~/.claude/projects/<project-path>/`. This data never expires,
+but it's never used — Claude doesn't read old transcripts unless
+explicitly asked.
+
+### Insight
+
+Two key capabilities make a workaround possible:
+
+1. **Claude can read transcript files** — they're regular JSONL on the
+   local filesystem.
+2. **Processing files injects content into context** — the act of
+   reading and summarizing a file leaves the summary in Claude's working
+   context.
+
+These two facts mean we can build a structured, persistent conversation
+history that Claude maintains incrementally — **before** the compaction
+cliff is reached.
+
+### Solution: Log-Structured Merge Summarization
+
+Borrow the merge strategy from LSM trees (Log-Structured Merge trees,
+O'Neil et al. 1996) to build a logarithmically-compressed history of
+all conversations.
+
+The core algorithm:
+
+1. Divide conversation transcripts into fixed-size **chunks** of C bytes
+   (e.g., C = 100 KB).
+2. **Summarize** each chunk into a markdown file of approximately S bytes
+   (e.g., S = 50 KB). This is the fundamental summary task.
+3. When two summaries exist at the **same level**, **merge** them into a
+   single summary of the same target size S.
+4. The active historical memory at any point is the set of **un-merged
+   summaries** — at most log₂(n) files for n chunks.
+
+### Binary counting correspondence
+
+The algorithm mirrors binary arithmetic. The number of chunks processed,
+written in binary, tells you exactly which summary levels are active.
+
+| Chunks | Binary | Active summaries                              |
+|--------|--------|-----------------------------------------------|
+| 1      | 1      | summary-0                                     |
+| 2      | 10     | summary-0-1                                   |
+| 3      | 11     | summary-0-1, summary-2                        |
+| 4      | 100    | summary-0-3                                   |
+| 5      | 101    | summary-0-3, summary-4                        |
+| 6      | 110    | summary-0-3, summary-4-5                      |
+| 7      | 111    | summary-0-3, summary-4-5, summary-6           |
+| 8      | 1000   | summary-0-7                                   |
+
+Each merge doubles the time span covered while keeping the file size
+constant at ~S bytes. The result: recent history at high resolution,
+older history at progressively lower resolution. This matches the actual
+utility curve — what you discussed yesterday matters more than what you
+discussed last month.
+
+### File structure
+
+```
+~/.claude/projects/<project-path>/
+├── memory/                    (existing alzheimer tree)
+│   ├── MEMORY.md
+│   ├── glossary.md
+│   └── ...
+└── history/                   (historical memory)
+    ├── state.json             (chunk counter, calibration data)
+    ├── summary-0-7.md         (merged: chunks 0-7)
+    ├── summary-8-11.md        (merged: chunks 8-11)
+    ├── summary-12-13.md       (merged: chunks 12-13)
+    └── summary-14.md          (chunk 14, not yet merged)
+```
+
+Summary files use a naming convention that encodes the chunk range:
+`summary-{first}-{last}.md` for merged files, `summary-{n}.md` for
+unmerged single-chunk files. This makes the merge tree structure
+self-evident from a directory listing.
+
+### Key properties
+
+- **Logarithmic total size.** At most log₂(n) summary files, each ~S
+  bytes. For 1000 chunks (~100 MB of conversation), that's ~10 files
+  totaling ~500 KB.
+- **Amortized O(1) merges per chunk.** Each chunk participates in at
+  most log₂(n) merges over its entire lifetime, spread across future
+  chunk arrivals. The expected merge cost per new chunk is constant.
+- **Never re-process old data.** After chunk 2^k is processed, chunks
+  0 through 2^k-1 are never read again. All their information is
+  captured in summary-0-{2^k-1}.md.
+- **Incremental injection.** Every merge operation requires Claude to
+  read two summaries and produce a synthesis. This naturally injects
+  historical context into the active conversation.
+- **Persistent artifacts.** Summary files survive across sessions,
+  compactions, and restarts. A new session can bootstrap historical
+  awareness by reading the current top-level summaries.
+
+### Initialization
+
+For an existing Claude installation with extensive conversation history,
+the full history must be processed once. For 81 MB of transcripts
+(~810 chunks at C=100KB), this is a significant but one-time cost.
+
+Initialization walks **backwards** through conversation history (newest
+first). This means:
+- The most valuable (recent) history is summarized first
+- The process can be interrupted at any point and still yield a useful
+  partial result — recent summaries are complete, older history simply
+  isn't indexed yet
+- Merges are performed as they become available during the backward walk
+
+For new installations, initialization is essentially free — there's no
+history to process yet.
+
+### Steady-state operation
+
+After initialization, historical memory updates incrementally:
+
+1. A hook monitors total JSONL transcript size (a single `stat()` call,
+   essentially free).
+2. When the accumulated new data since the last summary crosses the
+   chunk threshold C, a new summarization is triggered.
+3. Claude summarizes the new chunk into `summary-{n}.md`.
+4. If the chunk count triggers a merge (i.e., a power-of-two boundary
+   in the binary representation changes), the merge cascade runs.
+
+The hook can run on any event (PostToolUse, SessionStart, PreCompact).
+Only the threshold check is frequent; actual summarization only happens
+when a new chunk boundary is crossed.
+
+### Session start / post-compaction bootstrap
+
+On a cold start (new session or after compaction), Claude has no
+historical context beyond what MEMORY.md provides. The SessionStart
+hook loads the top-level summary pointers from `state.json` and
+instructs Claude to read them.
+
+For 810 chunks, the active set is at most log₂(810) ≈ 10 summary files.
+At ~50 KB each, that's ~500 KB of historical context injected on startup
+— covering the entire conversation history at varying resolution.
+
+### Context window budget
+
+A portion of the context window is allocated to historical memory.
+The exact budget depends on the model's window size, which is not
+directly observable at runtime.
+
+**Empirical calibration:** A calibration routine fills context with
+known amounts of summary text and observes when compaction triggers.
+This directly measures the effective window size without needing to
+know the theoretical number. The calibration result is cached in
+`state.json` and only needs to run once.
+
+The target summary size S and chunk size C can then be tuned so that
+the full summary tree fits within budget while maximizing coverage
+and resolution.
+
+### Relationship to existing memory
+
+Historical memory and the existing alzheimer memory tree serve
+different purposes:
+
+| | Memory tree (MEMORY.md) | Historical memory |
+|---|---|---|
+| **Contains** | Facts, preferences, decisions | Narrative context, discussion flow |
+| **Retention** | Indefinite, full fidelity | Logarithmic decay with age |
+| **Written by** | Claude (explicit saves) | Automated summarization |
+| **Updated** | On each memory write | On chunk threshold |
+| **Survives** | Across all sessions | Across all sessions |
+
+The two systems complement each other. Memory files capture *what was
+decided*. Historical memory captures *how we got there* — the reasoning,
+the side conversations, the exploratory discussions that inform future
+work but don't warrant a permanent memory entry.
+
+### Open questions
+
+- **Subagent log weaving.** Conversation directories contain subagent
+  transcripts in subdirectories. These need to be woven into the main
+  timeline (by wall-clock timestamp) for coherent summarization.
+- **Summarization quality.** The fundamental summary task (JSONL →
+  markdown) needs careful prompt engineering. It must preserve active
+  threads, stated preferences, and reasoning — exactly the things that
+  standard compaction drops.
+- **Cross-conversation boundaries.** Transcript files represent separate
+  sessions. Summaries should note session boundaries but not treat each
+  session as fully independent — ongoing work spans sessions.
+- **Background processing.** Both initialization and steady-state merges
+  consume context. Large merge cascades (e.g., at chunk 512) may benefit
+  from running as background agents to avoid displacing the user's active
+  work.
+
 ## File Layout
 
 ```
