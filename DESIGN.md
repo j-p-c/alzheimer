@@ -216,7 +216,7 @@ results, wrong definitions, inability to understand context).
 
 ### Staleness detection
 
-`glossary_is_stale()` compares the mtime of `glossary.md` against all
+`glossary_is_stale()` compares the `mtime` of `glossary.md` against all
 memory files. If any memory file is newer, the glossary is stale.
 
 ### Integration with rebalance()
@@ -284,7 +284,7 @@ and files in `_index/` (already checked by `rebalance_index()`).
 ## Update staleness check
 
 On SessionStart and PreCompact hooks, the rebalancer checks whether the
-local alzheimer repo is behind `origin/main`. If updates are available,
+local Alzheimer repo is behind `origin/main`. If updates are available,
 it appends `(update available)` to the user-visible status line and
 sends instructions to Claude via `additionalContext`.
 
@@ -426,7 +426,7 @@ constraints**.
 The rebalancer treats `type: guardrails` the same way it treats
 `type: glossary` — it is never moved to `_index/`, always stays
 pinned in the root `MEMORY.md`. Staleness detection works identically:
-if the file's mtime is older than any memory file that references
+if the file's `mtime` is older than any memory file that references
 behavioral rules, Claude is instructed to review and update it.
 
 #### Relationship to memory
@@ -500,7 +500,7 @@ prompting Claude to ask the user for explicit confirmation.
 #### Configurable rules
 
 Hard rules are loaded from a `.guardrails.conf` file (if present) in
-the alzheimer install directory, allowing users to customize which
+the Alzheimer install directory, allowing users to customize which
 operations are blocked. The default set covers the most dangerous
 patterns identified in practice.
 
@@ -534,7 +534,7 @@ soft layer handles everything the hard layer can't express as a regex.
 - `type: guardrails` is added to the rebalancer's pinned types
   (alongside `type: glossary`), so it is never moved to `_index/`.
 - Staleness detection follows the same pattern as glossary: compare
-  mtime against memory files, emit update instructions when stale.
+  `mtime` against memory files, emit update instructions when stale.
 - The guardrails entry in `MEMORY.md` summarizes the active rules:
 
 ```markdown
@@ -560,7 +560,7 @@ soft layer handles everything the hard layer can't express as a regex.
 
 Claude Code's conversation compaction is a cliff-edge: when the context
 window fills, older messages are summarized by a model call that the user
-and alzheimer have no control over. The summary is lossy — it tends to
+and Alzheimer have no control over. The summary is lossy — it tends to
 preserve the "main work thread" but drop side conversations, active
 discussion topics, stated preferences, and reasoning context. Each
 successive compaction compounds the loss.
@@ -627,7 +627,7 @@ discussed last month.
 
 ```
 ~/.claude/projects/<project-path>/
-├── memory/                    (existing alzheimer tree)
+├── memory/                    (existing Alzheimer tree)
 │   ├── MEMORY.md
 │   ├── glossary.md
 │   └── ...
@@ -726,7 +726,7 @@ and resolution.
 
 ### Relationship to existing memory
 
-Historical memory and the existing alzheimer memory tree serve
+Historical memory and the existing Alzheimer memory tree serve
 different purposes:
 
 | | Memory tree (`MEMORY.md`) | Historical memory |

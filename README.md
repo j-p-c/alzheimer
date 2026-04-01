@@ -114,7 +114,7 @@ python3 setup.py --check
 
 ## Usage
 
-Once installed, alzheimer runs automatically in the background. You
+Once installed, Alzheimer runs automatically in the background. You
 don't need to do anything — the hooks handle everything. But if you
 want to check on things or troubleshoot, here's how.
 
@@ -205,7 +205,7 @@ files (on disk but not in any index) and oversized leaf files (over
 the problems immediately — no waiting for the next `--verify` run.
 
 On session start and before compaction, the hooks also check whether
-a newer version of alzheimer is available on GitHub. If so, Claude
+a newer version of Alzheimer is available on GitHub. If so, Claude
 will let you know and offer to update. The check is cached (at most
 once per day) to avoid slowing things down.
 
@@ -240,7 +240,7 @@ Alzheimer is opinionated: it is designed for **long-lived, persistent
 collaboration**. It assumes you want Claude to remember everything —
 not just facts and decisions, but the flow of work, the reasoning
 behind choices, the side conversations that inform future direction.
-Every feature in alzheimer optimizes for context preservation over
+Every feature in Alzheimer optimizes for context preservation over
 token efficiency:
 
 - **Memory rebalancing** keeps your knowledge base structured as it
