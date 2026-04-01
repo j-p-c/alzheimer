@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import unittest
 
 from rebalance import (
@@ -60,6 +61,13 @@ from guardrails import (
     check_rules, load_rules, DEFAULT_RULES, get_match_text,
     _is_self_exec, _config_path, _load_config, _save_config,
     add_rule, remove_rule, exec_with_temporary_allow, find_matching_rule,
+)
+
+from reminders import (
+    should_check, touch_timestamp, parse_date_reminders,
+    parse_daily_checks, parse_recurring_reminders,
+    check_date_reminders, check_recurring_reminders,
+    collect_due_reminders, TIMESTAMP_FILE, RECURRING_STATE_FILE,
 )
 
 
@@ -2029,6 +2037,256 @@ class TestGuardrailsConfigManipulation(unittest.TestCase):
 
 # Need to import the module for monkeypatching _alzheimer_dir
 import guardrails
+import reminders
+
+
+class TestRemindersTier1(unittest.TestCase):
+    """Tests for the tier 1 timestamp gate."""
+
+    def setUp(self):
+        self.orig_timestamp = reminders.TIMESTAMP_FILE
+        self.tmpdir = tempfile.mkdtemp()
+        reminders.TIMESTAMP_FILE = os.path.join(self.tmpdir, "last-check")
+
+    def tearDown(self):
+        reminders.TIMESTAMP_FILE = self.orig_timestamp
+        shutil.rmtree(self.tmpdir)
+
+    def test_should_check_no_file(self):
+        """First run (no timestamp file) should always check."""
+        self.assertTrue(should_check())
+
+    def test_should_check_recent(self):
+        """Recent timestamp should skip check."""
+        touch_timestamp()
+        self.assertFalse(should_check())
+
+    def test_should_check_expired(self):
+        """Old timestamp should trigger check."""
+        touch_timestamp()
+        # Backdate the file by 2 hours.
+        old_time = time.time() - 7200
+        os.utime(reminders.TIMESTAMP_FILE, (old_time, old_time))
+        self.assertTrue(should_check())
+
+    def test_should_check_custom_interval(self):
+        """Custom interval should be respected."""
+        touch_timestamp()
+        # 0 minute interval = always check.
+        self.assertTrue(should_check(interval=0))
+
+    def test_touch_creates_file(self):
+        """touch_timestamp should create the file."""
+        self.assertFalse(os.path.exists(reminders.TIMESTAMP_FILE))
+        touch_timestamp()
+        self.assertTrue(os.path.exists(reminders.TIMESTAMP_FILE))
+
+
+class TestRemindersDateParsing(unittest.TestCase):
+    """Tests for date reminder parsing."""
+
+    def test_parse_date_reminders(self):
+        """Parse standard date reminder lines."""
+        content = (
+            "# Reminders\n\n"
+            "- 2026-04-12 — Check issue traction\n"
+            "- 2026-05-01 — Review quarterly\n"
+            "- Not a reminder\n"
+            "- **Bold item**: also not a date reminder\n"
+        )
+        reminders_list = parse_date_reminders(content)
+        self.assertEqual(len(reminders_list), 2)
+        self.assertEqual(reminders_list[0], ("2026-04-12", "Check issue traction"))
+        self.assertEqual(reminders_list[1], ("2026-05-01", "Review quarterly"))
+
+    def test_parse_date_reminders_dash_variants(self):
+        """Parse reminders with different dash types."""
+        content = (
+            "- 2026-04-12 - With hyphen\n"
+            "- 2026-04-13 – With en-dash\n"
+            "- 2026-04-14 — With em-dash\n"
+        )
+        reminders_list = parse_date_reminders(content)
+        self.assertEqual(len(reminders_list), 3)
+
+    def test_parse_empty(self):
+        """Empty content returns no reminders."""
+        self.assertEqual(parse_date_reminders(""), [])
+
+    def test_check_date_due(self):
+        """Reminders on or before today are due."""
+        reminders_list = [
+            ("2026-04-01", "Due today"),
+            ("2026-03-15", "Overdue"),
+            ("2026-12-25", "Future"),
+        ]
+        due = check_date_reminders(reminders_list, today="2026-04-01")
+        self.assertEqual(len(due), 2)
+        self.assertIn("Due today", due[0])
+        self.assertIn("Overdue", due[1])
+
+    def test_check_date_none_due(self):
+        """No reminders due if all are in the future."""
+        reminders_list = [("2099-01-01", "Far future")]
+        due = check_date_reminders(reminders_list, today="2026-04-01")
+        self.assertEqual(due, [])
+
+
+class TestRemindersDailyChecks(unittest.TestCase):
+    """Tests for daily checks section parsing."""
+
+    def test_parse_daily_checks(self):
+        """Parse daily checks section."""
+        content = (
+            "# Reminders\n\n"
+            "- 2026-04-12 — Something\n\n"
+            "# Daily checks\n\n"
+            "These run every session.\n\n"
+            "- **Memory issue watch**: Run git pull then read report.\n"
+            "- **Update check**: Check for new version.\n\n"
+            "# Other section\n"
+        )
+        checks = parse_daily_checks(content)
+        self.assertEqual(len(checks), 2)
+        self.assertEqual(checks[0][0], "Memory issue watch")
+        self.assertIn("git pull", checks[0][1])
+
+    def test_parse_daily_checks_empty(self):
+        """No daily checks section returns empty list."""
+        self.assertEqual(parse_daily_checks("# Reminders\n"), [])
+
+
+class TestRemindersRecurring(unittest.TestCase):
+    """Tests for recurring reminder parsing and checking."""
+
+    def setUp(self):
+        self.orig_state = reminders.RECURRING_STATE_FILE
+        self.tmpdir = tempfile.mkdtemp()
+        reminders.RECURRING_STATE_FILE = os.path.join(
+            self.tmpdir, "recurring-state"
+        )
+
+    def tearDown(self):
+        reminders.RECURRING_STATE_FILE = self.orig_state
+        shutil.rmtree(self.tmpdir)
+
+    def test_parse_daily(self):
+        """Parse daily recurring reminders."""
+        content = "- daily 09:00 — Pull report\n"
+        result = parse_recurring_reminders(content)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], ("daily", "09:00", "Pull report"))
+
+    def test_parse_weekly(self):
+        """Parse weekly recurring reminders."""
+        content = "- weekly Mon — Review issues\n"
+        result = parse_recurring_reminders(content)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], ("weekly", "Mon", "Review issues"))
+
+    def test_check_daily_due(self):
+        """Daily reminder fires when time has passed."""
+        from datetime import datetime
+        reminders_list = [("daily", "09:00", "Morning task")]
+        # Set now to 10am.
+        now = datetime(2026, 4, 1, 10, 0)
+        due = check_recurring_reminders(reminders_list, now=now)
+        self.assertEqual(len(due), 1)
+        self.assertIn("Morning task", due[0])
+
+    def test_check_daily_not_yet(self):
+        """Daily reminder doesn't fire before scheduled time."""
+        from datetime import datetime
+        reminders_list = [("daily", "09:00", "Morning task")]
+        now = datetime(2026, 4, 1, 8, 0)
+        due = check_recurring_reminders(reminders_list, now=now)
+        self.assertEqual(due, [])
+
+    def test_check_daily_no_double_fire(self):
+        """Daily reminder fires only once per day."""
+        from datetime import datetime
+        reminders_list = [("daily", "09:00", "Morning task")]
+        now = datetime(2026, 4, 1, 10, 0)
+        # First check fires.
+        due1 = check_recurring_reminders(reminders_list, now=now)
+        self.assertEqual(len(due1), 1)
+        # Second check same day does not.
+        due2 = check_recurring_reminders(reminders_list, now=now)
+        self.assertEqual(due2, [])
+
+    def test_check_weekly_right_day(self):
+        """Weekly reminder fires on the correct day."""
+        from datetime import datetime
+        reminders_list = [("weekly", "Wed", "Midweek review")]
+        # 2026-04-01 is a Wednesday.
+        now = datetime(2026, 4, 1, 12, 0)
+        due = check_recurring_reminders(reminders_list, now=now)
+        self.assertEqual(len(due), 1)
+
+    def test_check_weekly_wrong_day(self):
+        """Weekly reminder doesn't fire on the wrong day."""
+        from datetime import datetime
+        reminders_list = [("weekly", "Mon", "Monday task")]
+        # 2026-04-01 is a Wednesday.
+        now = datetime(2026, 4, 1, 12, 0)
+        due = check_recurring_reminders(reminders_list, now=now)
+        self.assertEqual(due, [])
+
+
+class TestRemindersCollect(unittest.TestCase):
+    """Tests for collect_due_reminders integration."""
+
+    def setUp(self):
+        self.orig_find = reminders.find_reminder_files
+        self.orig_state = reminders.RECURRING_STATE_FILE
+        self.tmpdir = tempfile.mkdtemp()
+        reminders.RECURRING_STATE_FILE = os.path.join(
+            self.tmpdir, "recurring-state"
+        )
+
+    def tearDown(self):
+        reminders.find_reminder_files = self.orig_find
+        reminders.RECURRING_STATE_FILE = self.orig_state
+        shutil.rmtree(self.tmpdir)
+
+    def test_collect_with_due_reminders(self):
+        """collect_due_reminders finds due items across files."""
+        reminder_file = os.path.join(self.tmpdir, "reminders.md")
+        with open(reminder_file, "w") as f:
+            f.write(
+                "# Reminders\n\n"
+                "- 2026-04-01 — Do the thing\n"
+                "- 2099-12-31 — Future thing\n"
+            )
+        reminders.find_reminder_files = lambda: [reminder_file]
+        due = collect_due_reminders(today="2026-04-01")
+        self.assertEqual(len(due), 1)
+        self.assertIn("Do the thing", due[0])
+
+    def test_collect_nothing_due(self):
+        """collect_due_reminders returns empty when nothing is due."""
+        reminder_file = os.path.join(self.tmpdir, "reminders.md")
+        with open(reminder_file, "w") as f:
+            f.write("# Reminders\n\n- 2099-01-01 — Future\n")
+        reminders.find_reminder_files = lambda: [reminder_file]
+        due = collect_due_reminders(today="2026-04-01")
+        self.assertEqual(due, [])
+
+    def test_collect_no_files(self):
+        """No reminder files returns empty list."""
+        reminders.find_reminder_files = lambda: []
+        due = collect_due_reminders()
+        self.assertEqual(due, [])
+
+    def test_missed_reminder_still_fires(self):
+        """A reminder whose date has long passed still fires."""
+        reminder_file = os.path.join(self.tmpdir, "reminders.md")
+        with open(reminder_file, "w") as f:
+            f.write("# Reminders\n\n- 2025-01-01 — Ancient reminder\n")
+        reminders.find_reminder_files = lambda: [reminder_file]
+        due = collect_due_reminders(today="2026-04-01")
+        self.assertEqual(len(due), 1)
+        self.assertIn("Ancient reminder", due[0])
 
 
 if __name__ == "__main__":

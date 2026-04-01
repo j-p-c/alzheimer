@@ -29,7 +29,14 @@ def get_guardrails_path():
                         "guardrails.py")
 
 
-def generate_hooks(rebalancer_path, guardrails_path=None):
+def get_reminders_path():
+    """Return the absolute path to reminders.py."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "reminders.py")
+
+
+def generate_hooks(rebalancer_path, guardrails_path=None,
+                    reminders_path=None):
     """Generate the hook configuration dict."""
     # Escape for JSON embedding in shell commands.
     rp = rebalancer_path.replace('"', '\\"')
@@ -89,6 +96,18 @@ def generate_hooks(rebalancer_path, guardrails_path=None):
             }]
         }]
 
+    # Add reminders UserPromptSubmit hook (time-triggered checks).
+    if reminders_path:
+        mp = reminders_path.replace('"', '\\"')
+        hooks["UserPromptSubmit"] = [{
+            "hooks": [{
+                "type": "command",
+                "command": f'python3 "{mp}"',
+                "timeout": 5,
+                "statusMessage": "Checking reminders..."
+            }]
+        }]
+
     return hooks
 
 
@@ -102,7 +121,8 @@ def read_settings(settings_path):
 
 def _is_alzheimer_hook(command):
     """Check if a hook command belongs to alzheimer."""
-    return ("rebalance.py" in command or "guardrails.py" in command)
+    return ("rebalance.py" in command or "guardrails.py" in command
+            or "reminders.py" in command)
 
 
 def merge_hooks(existing_hooks, new_hooks):
@@ -135,9 +155,13 @@ def merge_hooks(existing_hooks, new_hooks):
                 continue
 
             # Find the matching existing alzheimer hook to replace.
-            # Match by the specific script name (rebalance.py or
-            # guardrails.py) to avoid cross-replacement.
-            script = "guardrails.py" if "guardrails.py" in new_cmd else "rebalance.py"
+            # Match by the specific script name to avoid cross-replacement.
+            if "guardrails.py" in new_cmd:
+                script = "guardrails.py"
+            elif "reminders.py" in new_cmd:
+                script = "reminders.py"
+            else:
+                script = "rebalance.py"
             replaced = False
             for i, group in enumerate(existing_groups):
                 for hook in group.get("hooks", []):
@@ -212,6 +236,24 @@ def check_hooks(settings_path, rebalancer_path):
         print(f"  PreToolUse (guardrails): OK")
     else:
         print(f"  PreToolUse (guardrails): MISSING")
+        ok = False
+
+    # Check reminders hook.
+    reminders_path = get_reminders_path()
+    found = False
+    for group in hooks.get("UserPromptSubmit", []):
+        for hook in group.get("hooks", []):
+            cmd = hook.get("command", "")
+            if "reminders.py" in cmd:
+                found = True
+                if reminders_path not in cmd:
+                    print(f"WARN: UserPromptSubmit hook points to different "
+                          f"reminders.py path.")
+                    print(f"  Expected: {reminders_path}")
+    if found:
+        print(f"  UserPromptSubmit (reminders): OK")
+    else:
+        print(f"  UserPromptSubmit (reminders): MISSING")
         ok = False
 
     return ok
@@ -416,7 +458,8 @@ def main():
 
     rebalancer_path = get_rebalancer_path()
     guardrails_path = get_guardrails_path()
-    hooks = generate_hooks(rebalancer_path, guardrails_path)
+    reminders_path = get_reminders_path()
+    hooks = generate_hooks(rebalancer_path, guardrails_path, reminders_path)
 
     if args.check:
         ok = check_hooks(args.settings, rebalancer_path)
@@ -427,6 +470,7 @@ def main():
         print(f"Hooks installed in {args.settings}")
         print(f"Rebalancer: {rebalancer_path}")
         print(f"Guardrails: {guardrails_path}")
+        print(f"Reminders:  {reminders_path}")
         print("\nVerifying hooks:")
         check_hooks(args.settings, rebalancer_path)
 

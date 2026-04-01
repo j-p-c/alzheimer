@@ -79,11 +79,18 @@ Default rules require user confirmation before `git push`, `git push
 root (`/`) is blocked unconditionally. Custom rules can be added via
 `.guardrails.conf`.
 
+### Reminders
+
+Time-triggered actions that survive compaction and session restarts. A
+two-tier `UserPromptSubmit` hook: tier 1 is a ~1ms timestamp check on
+every prompt; tier 2 reads `reminders.md` when the check interval has
+elapsed and injects due reminders into context. Supports one-shot date
+reminders, daily checks, and recurring schedules (daily/weekly).
+
 ### In development
 
 - **Historical memory:** fixes memory losses after compactions by more closely emulating human memory
 - **Post-mortem:** teaches Claude how to efficiently but comprehensively answer "Why did..." questions
-- **Reminders:** lightweight actions to make sure that Claude doesn't forget to do them
 
 ## Installation
 
@@ -262,6 +269,9 @@ token efficiency:
 - **Guardrails** enforce behavioral rules that persist across
   conversations — because a long-lived collaborator needs durable
   constraints, not just per-session instructions.
+- **Reminders** ensure time-triggered actions survive compaction and
+  session restarts — because "remind me next week" shouldn't depend
+  on Claude happening to remember.
 - **Historical memory** *(in development)* maintains a logarithmically
   compressed summary of your entire conversation history, so context
   degrades gracefully with age instead of falling off a cliff at
@@ -333,7 +343,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-144 tests covering:
+167 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
@@ -360,6 +370,7 @@ python3 -m unittest test_rebalance -v
 - Guardrails soft layer (staleness, parsing, pinning, system messages)
 - Guardrails hard layer (block rules, custom rules, pattern matching)
 - Guardrails confirm mode (self-allowlist, config manipulation, try/finally restoration)
+- Reminders (tier 1 gating, date parsing, daily checks, recurring, missed reminders)
 
 ## Concurrency
 

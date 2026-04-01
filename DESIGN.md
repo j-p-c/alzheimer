@@ -962,7 +962,7 @@ modify any files. However, its findings may lead to new guardrails
   context. Historical memory summaries help narrow the search, but
   the drill-down step needs careful budgeting.
 
-## Reminders (in development)
+## Reminders
 
 ### Problem
 
@@ -1063,6 +1063,7 @@ alzheimer/
 ├── README.md          (usage instructions)
 ├── guardrails.py      (PreToolUse hook: hard layer, confirm mode, --exec)
 ├── rebalance.py       (core rebalancer script, soft layer integration)
+├── reminders.py       (UserPromptSubmit hook: two-tier time-triggered checks)
 ├── setup.py           (installer, updater, reference memory seeder)
 └── test_rebalance.py  (tests)
 ```
