@@ -1787,30 +1787,34 @@ class TestGuardrailsSoftLayer(unittest.TestCase):
 class TestGuardrailsHardLayer(unittest.TestCase):
     """Tests for guardrails.py (hard layer / PreToolUse hook)."""
 
-    def test_git_push_blocked(self):
-        """git push should be blocked by default rules."""
+    def test_git_push_confirm(self):
+        """git push should require confirmation by default rules."""
         allowed, msg = check_rules(
             "Bash", {"command": "git push origin main"})
         self.assertFalse(allowed)
         self.assertIn("guardrails", msg.lower())
+        self.assertIn("--exec", msg)
 
-    def test_git_push_force_blocked(self):
-        """git push --force should be blocked."""
+    def test_git_push_force_confirm(self):
+        """git push --force should require confirmation."""
         allowed, msg = check_rules(
             "Bash", {"command": "git push --force origin main"})
         self.assertFalse(allowed)
+        self.assertIn("--exec", msg)
 
-    def test_git_reset_hard_blocked(self):
-        """git reset --hard should be blocked."""
+    def test_git_reset_hard_confirm(self):
+        """git reset --hard should require confirmation."""
         allowed, msg = check_rules(
             "Bash", {"command": "git reset --hard HEAD~1"})
         self.assertFalse(allowed)
+        self.assertIn("--exec", msg)
 
-    def test_branch_delete_blocked(self):
-        """git branch -D should be blocked."""
+    def test_branch_delete_confirm(self):
+        """git branch -D should require confirmation."""
         allowed, msg = check_rules(
             "Bash", {"command": "git branch -D feature-xyz"})
         self.assertFalse(allowed)
+        self.assertIn("--exec", msg)
 
     def test_rm_rf_root_blocked(self):
         """rm -rf / should be blocked."""
@@ -1870,11 +1874,12 @@ class TestGuardrailsHardLayer(unittest.TestCase):
             "Bash", {"command": "anything"}, rules=bad_rules)
         self.assertTrue(allowed)
 
-    def test_git_push_in_pipeline_blocked(self):
-        """git push in a chained command should still be blocked."""
-        allowed, _ = check_rules(
+    def test_git_push_in_pipeline_confirm(self):
+        """git push in a chained command should still require confirmation."""
+        allowed, msg = check_rules(
             "Bash", {"command": "git add . && git commit -m x && git push"})
         self.assertFalse(allowed)
+        self.assertIn("--exec", msg)
 
     def test_rm_rf_subdir_allowed(self):
         """rm -rf on non-root paths is allowed."""

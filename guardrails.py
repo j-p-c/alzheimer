@@ -34,37 +34,37 @@ DEFAULT_RULES = [
     {
         "tool": "Bash",
         "pattern": r"git\s+push\b",
-        "action": "block",
+        "action": "confirm",
         "message": (
-            "git push is blocked by Alzheimer guardrails. "
-            "Ask the user for explicit confirmation before pushing."
+            "git push requires user confirmation (Alzheimer guardrails). "
+            "Ask the user for explicit permission before pushing."
         ),
     },
     {
         "tool": "Bash",
         "pattern": r"git\s+push\s+.*--force\b",
-        "action": "block",
+        "action": "confirm",
         "message": (
-            "git push --force is blocked by Alzheimer guardrails. "
+            "git push --force requires user confirmation (Alzheimer guardrails). "
             "This is a destructive operation. Ask the user first."
         ),
     },
     {
         "tool": "Bash",
         "pattern": r"git\s+reset\s+--hard\b",
-        "action": "block",
+        "action": "confirm",
         "message": (
-            "git reset --hard is blocked by Alzheimer guardrails. "
+            "git reset --hard requires user confirmation (Alzheimer guardrails). "
             "This discards uncommitted changes. Ask the user first."
         ),
     },
     {
         "tool": "Bash",
         "pattern": r"git\s+branch\s+-[dD]\b",
-        "action": "block",
+        "action": "confirm",
         "message": (
-            "Branch deletion is blocked by Alzheimer guardrails. "
-            "Ask the user for explicit confirmation."
+            "Branch deletion requires user confirmation (Alzheimer guardrails). "
+            "Ask the user for explicit permission."
         ),
     },
     {

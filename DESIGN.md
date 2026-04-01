@@ -628,11 +628,16 @@ reducing the frequency of guardrail activations over time.
 ### Open questions (guardrails)
 
 - **Self-protection:** The hard layer can't protect itself from being
-  edited — Claude can use the Edit tool to modify `guardrails.py` or
-  `.guardrails.conf`. The soft layer (`guardrails.md`) must include a
-  rule like "never edit guardrails files without explicit user
-  permission." This is the two layers reinforcing each other: neither
-  is sufficient alone.
+  edited — Claude can use the Edit tool to modify `guardrails.py`,
+  `.guardrails.conf`, or even the hook registration in Claude's
+  settings. Filesystem permissions (`sudo chown root`) could protect
+  the guardrails files themselves, but Claude could still remove the
+  hook entry from settings. This is a known limitation, not a bug:
+  Alzheimer's threat model is *Claude forgetting* guardrails after
+  compaction, not Claude deliberately circumventing them. The hook
+  fires mechanically regardless of what Claude remembers, which
+  solves the core problem. Enterprise-grade "tower of admins"
+  protection is out of scope but could be layered on top.
 - **Imperative detection:** When a user says "NEVER do X without
   permission," the system should recognize this as a hard-block
   imperative and write the rule to `.guardrails.conf` automatically,
