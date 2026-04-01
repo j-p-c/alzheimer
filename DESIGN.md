@@ -521,7 +521,7 @@ The two layers serve different purposes and do not overlap:
 |---|---|---|
 | **Enforcement** | Attention-based (Claude reads) | Mechanical (hook blocks) |
 | **Scope** | Nuanced, context-dependent rules | Clear-cut, always-block patterns |
-| **Bypassable** | Yes (permission drift risk) | No (exits non-zero) |
+| **Bypassable** | Yes (permission drift risk) | No (exits non-zero); confirm mode uses deterministic wrapper |
 | **Examples** | "Update docs when pushing code" | Block `git push` without prior user message containing "push" |
 | **Written by** | Claude | `setup.py` / config file |
 | **Failure mode** | Claude forgets or deprioritizes | False positive (blocks legitimate action) |
@@ -541,12 +541,104 @@ soft layer handles everything the hard layer can't express as a regex.
 - [Guardrails](guardrails.md) — no push without asking, no force-push, no secrets in public repos, ...
 ```
 
+### Confirm mode: deterministic temporary allow
+
+The two original action types — `"block"` (always reject) and the
+implicit allow (no rule matches) — leave a gap. Many real guardrails
+are neither "always block" nor "always allow" but **"block unless the
+user has explicitly approved."** For example: "never run bash commands
+without my permission."
+
+A naive implementation would have the soft layer manage a
+remove-rule → run-command → re-add-rule cycle. But this relies on
+Claude faithfully performing three steps in sequence — exactly the
+kind of behavioral promise that permission drift erodes. After several
+approved commands, Claude might skip the re-add step.
+
+The solution is to delegate the cycle to **deterministic Python code**:
+
+```python
+# guardrails.py --exec "git push origin main"
+def exec_with_temporary_allow(command, rule):
+    """Remove rule, run command, re-add rule. Guaranteed by try/finally."""
+    remove_rule(rule)
+    try:
+        result = subprocess.run(command, shell=True, capture_output=True)
+    finally:
+        add_rule(rule)  # deterministic — not subject to permission drift
+    return result
+```
+
+The flow for a `"confirm"` rule:
+
+1. Hook fires, matches a `"confirm"` rule, **blocks** the command
+2. Block message tells Claude: "this requires user confirmation"
+3. Claude asks the user; user approves
+4. Claude calls `guardrails.py --exec "<command>"` via the Bash tool
+5. The hook recognizes `guardrails.py --exec` as a **self-whitelist**
+   pattern and lets it through
+6. Python removes the rule, runs the command, re-adds the rule in a
+   `try/finally` — the re-add is guaranteed regardless of command
+   success or failure
+7. Command output is returned to Claude normally
+
+The critical insight: Python is not subject to permission drift. The
+safety-critical step (restoring the guardrail) is deterministic code,
+not a behavioral promise. This gives the hard layer a third action
+type:
+
+| Action | Behavior |
+|---|---|
+| `"allow"` | No rule matched — tool call proceeds |
+| `"block"` | Always rejected; user must edit config to remove rule |
+| `"confirm"` | Rejected on first attempt; approved execution via Python wrapper with guaranteed rule restoration |
+
+The self-whitelist is a simple pattern match: the hook checks whether
+the Bash command is an invocation of `guardrails.py --exec` and skips
+rule checking for that specific pattern. This is a narrow, predictable
+exception — not a general bypass mechanism.
+
+Broad `"confirm"` rules (e.g., matching all Bash commands) are an edge
+case but must be handled gracefully. A user might set one intentionally
+or accidentally. The self-whitelist ensures the system remains
+functional: the only Bash command that bypasses the rule is the
+guardrails wrapper itself.
+
+### Guardrails as behavioral nudges
+
+An unexpected property: guardrails don't just prevent bad actions, they
+redirect toward better ones. When a soft guardrail says "never run bash
+without asking," the friction of needing permission causes Claude to
+pause and reconsider whether bash is even necessary — often discovering
+that a dedicated tool (Edit, Grep, Read) is the better choice. This
+mirrors the human experience of "are you sure?" dialogs: the
+interruption itself improves decision-making, independent of the
+user's answer.
+
+This means guardrails have two modes of action:
+
+1. **Blocking:** preventing a dangerous operation (the intended effect)
+2. **Redirecting:** nudging toward better tool selection (an emergent
+   side effect)
+
+The redirecting effect is especially valuable because it is
+self-reinforcing: Claude learns to reach for the right tool first,
+reducing the frequency of guardrail activations over time.
+
 ### Open questions (guardrails)
 
-- **Smart blocking:** Can the hard hook be made context-aware? For
-  example, allowing `git push` only if the user's most recent message
-  contained the word "push." This would require the hook to read
-  recent conversation context, adding complexity.
+- **Self-protection:** The hard layer can't protect itself from being
+  edited — Claude can use the Edit tool to modify `guardrails.py` or
+  `.guardrails.conf`. The soft layer (`guardrails.md`) must include a
+  rule like "never edit guardrails files without explicit user
+  permission." This is the two layers reinforcing each other: neither
+  is sufficient alone.
+- **Imperative detection:** When a user says "NEVER do X without
+  permission," the system should recognize this as a hard-block
+  imperative and write the rule to `.guardrails.conf` automatically,
+  not just save it as a soft memory. The boundary between soft
+  (behavioral) and hard (mechanical) guardrails needs a clear
+  heuristic.
 - **Rule discovery:** Should Claude proactively suggest guardrails
   when it observes risky patterns, or only add them when the user
   explicitly states a rule?
