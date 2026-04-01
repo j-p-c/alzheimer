@@ -957,13 +957,107 @@ modify any files. However, its findings may lead to new guardrails
   context. Historical memory summaries help narrow the search, but
   the drill-down step needs careful budgeting.
 
+## Reminders (in development)
+
+### Problem
+
+Claude Code has no built-in mechanism for time-triggered actions.
+Users can say "remind me to check X next week," but this relies on
+Claude remembering — which fails across compaction, session restarts,
+and context loss. The current workaround (a `reminders.md` file that
+Claude reads and checks manually) is attention-based: it only works if
+Claude happens to read the file at the right time.
+
+Worse, `SessionStart` hooks are unreliable for recurring checks in
+long-lived sessions. Users who run multi-day conversations (the usage
+pattern Alzheimer optimizes for) may go weeks without starting a new
+session.
+
+### Solution: prompt-level time checking
+
+Reminders uses a two-tier hook architecture attached to
+`UserPromptSubmit` — the one event that fires reliably in long-lived
+sessions:
+
+1. **Tier 1 (every prompt, ~1ms):** A lightweight time check compares
+   the current wall clock against a single timestamp file
+   (`~/.alzheimer-last-check`). If less than N minutes have elapsed
+   since the last check, exit immediately. Cost: one `stat()` call
+   and one integer comparison.
+
+2. **Tier 2 (every N minutes):** Read the pinned `reminders.md` file,
+   compare each reminder's date/time against `now()`. If any reminders
+   are due, inject them into Claude's context via `additionalContext`.
+   Update the timestamp file.
+
+The tier 1 gate keeps per-prompt overhead negligible. The tier 2 check
+runs at a configurable interval (default: 60 minutes for date-level
+reminders, potentially shorter for time-level reminders).
+
+### Reminder format
+
+```markdown
+---
+type: reminders
+---
+
+# Reminders
+
+## Date reminders (checked hourly)
+
+- 2026-04-12 — Check if anthropics/claude-code#40614 got traction
+- 2026-05-01 — Review Alzheimer quarterly: prune stale memories
+
+## Recurring (checked hourly)
+
+- daily 09:00 — Pull memory-issue-watch report
+- weekly Mon — Review open GitHub issues
+```
+
+### Lifecycle
+
+1. User says "remind me to do X on Thursday"
+2. Claude converts to absolute date (`2026-04-03`) and adds to
+   `reminders.md`
+3. On the next tier 2 check after that date, the reminder is injected
+   into context
+4. Claude acts on it (or tells the user) and removes the line
+
+### Integration with existing hooks
+
+The tier 1 time check can be added to the existing `UserPromptSubmit`
+hook chain. Since hooks in the same event run sequentially, the
+timestamp check runs first and short-circuits before any expensive
+operations if the interval hasn't elapsed.
+
+The `reminders.md` file uses `type: reminders` frontmatter and is
+pinned in `MEMORY.md` (never moved to `_index/`), following the same
+pattern as glossary and guardrails.
+
+### Open questions (reminders)
+
+- **Granularity.** Date-level reminders (checked hourly) are
+  straightforward. Time-level reminders ("at 3pm") need shorter
+  check intervals, which increases per-prompt overhead. Is minute-level
+  checking worth the cost?
+- **Recurring reminders.** Daily/weekly patterns need a "last fired"
+  timestamp to avoid re-firing every check within the same day.
+  Store alongside the reminder or in a separate state file?
+- **Timezone handling.** Reminders should be in the user's local
+  timezone. The hook needs to know the timezone (from environment
+  or config) to compare correctly.
+- **Missed reminders.** If a reminder's date passes without any
+  session running, it should fire on the next check, not silently
+  expire. How far back to look?
+
 ## File layout
 
 ```
 alzheimer/
 ├── DESIGN.md          (this file)
 ├── README.md          (usage instructions)
-├── rebalance.py       (core rebalancer script)
+├── guardrails.py      (PreToolUse hook: hard layer, confirm mode, --exec)
+├── rebalance.py       (core rebalancer script, soft layer integration)
 ├── setup.py           (installer, updater, reference memory seeder)
 └── test_rebalance.py  (tests)
 ```
