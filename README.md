@@ -66,9 +66,21 @@ Young memory trees (no `_index/` directory yet) trigger rebalancing at
 50% of the normal threshold. This prevents a burst of new memories from
 overflowing before the first rebalance.
 
+### Guardrails
+
+Prevents permission drift and ensures that Claude abides by "NEVER" types
+of rules. A two-layer system: the *soft layer* (`guardrails.md` pinned in
+`MEMORY.md`) teaches Claude the rules; the *hard layer* (a `PreToolUse`
+hook running `guardrails.py`) mechanically blocks or confirms dangerous
+operations regardless of what Claude remembers after compaction.
+
+Default rules require user confirmation before `git push`, `git push
+--force`, `git reset --hard`, and `git branch -D`. Recursive delete of
+root (`/`) is blocked unconditionally. Custom rules can be added via
+`.guardrails.conf`.
+
 ### In development
 
-- **Guardrails:** prevents permission drift and ensures that Claude abides by "NEVER" types of rules
 - **Historical memory:** fixes memory losses after compactions by more closely emulating human memory
 - **Post-mortem:** teaches Claude how to efficiently but comprehensively answer "Why did..." questions
 - **Reminders:** lightweight actions to make sure that Claude doesn't forget to do them
@@ -247,9 +259,9 @@ token efficiency:
   grows, instead of letting it overflow and silently lose entries.
 - **Drift detection** catches problems continuously, not just when
   you think to check.
-- **Guardrails** *(in development)* enforce behavioral rules that
-  persist across conversations — because a long-lived collaborator
-  needs durable constraints, not just per-session instructions.
+- **Guardrails** enforce behavioral rules that persist across
+  conversations — because a long-lived collaborator needs durable
+  constraints, not just per-session instructions.
 - **Historical memory** *(in development)* maintains a logarithmically
   compressed summary of your entire conversation history, so context
   degrades gracefully with age instead of falling off a cliff at

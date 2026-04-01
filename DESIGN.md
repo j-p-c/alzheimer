@@ -354,7 +354,7 @@ paths.
   the standard flat system. An instance that doesn't understand
   categories will see them as normal entries pointing to readable files.
 
-## Guardrails (in development)
+## Guardrails
 
 ### Problem
 
