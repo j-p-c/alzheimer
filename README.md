@@ -71,6 +71,7 @@ overflowing before the first rebalance.
 - **Guardrails:** prevents permission drift and ensures that Claude abides by "NEVER" types of rules
 - **Historical memory:** fixes memory losses after compactions by more closely emulating human memory
 - **Post-mortem:** teaches Claude how to efficiently but comprehensively answer "Why did..." questions
+- **Reminders:** lightweight actions to make sure that Claude doesn't forget to do them
 
 ## Installation
 
