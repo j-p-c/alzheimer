@@ -45,6 +45,7 @@ INDEX_DIR = "_index"      # Subdirectory for category index files
 GLOSSARY_FILE = "glossary.md"
 GLOSSARY_MAX_TERMS = 20
 GLOSSARY_MIN_TERMS = 3    # Don't create glossary with fewer terms
+GUARDRAILS_FILE = "guardrails.md"
 
 # Config file name (placed in memory directory to override defaults).
 CONFIG_FILE = ".alzheimer.conf"
@@ -515,7 +516,8 @@ def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
     warnings = []
 
     # Orphan check (exclude glossary — it's managed by the rebalancer).
-    orphans = [o for o in find_orphans(memory_dir) if o != GLOSSARY_FILE]
+    pinned = {GLOSSARY_FILE, GUARDRAILS_FILE}
+    orphans = [o for o in find_orphans(memory_dir) if o not in pinned]
     if orphans:
         memory_md = os.path.join(memory_dir, "MEMORY.md")
         header, entries = parse_index(memory_md)
@@ -567,7 +569,7 @@ def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
             )
 
     # Oversized leaf file check.
-    skip = {"MEMORY.md", GLOSSARY_FILE}
+    skip = {"MEMORY.md", GLOSSARY_FILE, GUARDRAILS_FILE}
     oversized = []
     for name in sorted(os.listdir(memory_dir)):
         if name in skip or name.startswith("_") or not name.endswith(".md"):
@@ -653,13 +655,18 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                 f"but is within limits ({actual_lines} lines). "
                 f"Skipping rebalance (inline content not movable)."
             )
-        # Still run glossary update, but skip the rebalance itself.
+        # Still run glossary and guardrails updates, but skip the rebalance.
         emit_glossary = hook_event != "SessionStart"
         glossary_actions, glossary_entry, glossary_messages = update_glossary(
             memory_dir, dry_run, emit_messages=emit_glossary
         )
         actions.extend(glossary_actions)
         messages.extend(glossary_messages)
+        guardrails_actions, guardrails_entry, guardrails_messages = (
+            update_guardrails(memory_dir, dry_run, emit_messages=emit_glossary)
+        )
+        actions.extend(guardrails_actions)
+        messages.extend(guardrails_messages)
         # Check for drift (orphans, oversized leaf files).
         drift_actions, drift_warnings = check_drift(
             memory_dir, max_lines, dry_run)
@@ -688,6 +695,33 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                 if e["path"] == GLOSSARY_FILE:
                     if e["raw"] != glossary_entry["raw"]:
                         entries[i] = glossary_entry
+                        if not dry_run:
+                            write_index(memory_md, header, entries)
+                    break
+
+    # Update guardrails (same pattern as glossary — pinned, never moved).
+    guardrails_actions, guardrails_entry, guardrails_messages = (
+        update_guardrails(memory_dir, dry_run, emit_messages=emit_glossary)
+    )
+    actions.extend(guardrails_actions)
+    messages.extend(guardrails_messages)
+    if guardrails_entry:
+        has_guardrails = any(e["path"] == GUARDRAILS_FILE for e in entries)
+        if not has_guardrails:
+            # Insert after glossary (position 1) if glossary exists,
+            # else at position 0.
+            insert_pos = 1 if any(
+                e["path"] == GLOSSARY_FILE for e in entries
+            ) else 0
+            entries.insert(insert_pos, guardrails_entry)
+            if not dry_run:
+                write_index(memory_md, header, entries)
+        else:
+            # Update existing guardrails entry description.
+            for i, e in enumerate(entries):
+                if e["path"] == GUARDRAILS_FILE:
+                    if e["raw"] != guardrails_entry["raw"]:
+                        entries[i] = guardrails_entry
                         if not dry_run:
                             write_index(memory_md, header, entries)
                     break
@@ -853,8 +887,8 @@ def extract_keywords(text):
 
 
 def collect_memory_files(memory_dir):
-    """Return list of leaf memory file paths (excluding indices, glossary)."""
-    skip = {"MEMORY.md", GLOSSARY_FILE}
+    """Return list of leaf memory file paths (excluding indices, glossary, guardrails)."""
+    skip = {"MEMORY.md", GLOSSARY_FILE, GUARDRAILS_FILE}
     files = []
     for name in os.listdir(memory_dir):
         if name in skip or name.startswith("_") or not name.endswith(".md"):
@@ -992,6 +1026,137 @@ def update_glossary(memory_dir, dry_run=False, emit_messages=True):
         entry = build_glossary_entry(terms)
         actions.append(
             f"Glossary: {len(terms)} terms in {GLOSSARY_FILE}."
+        )
+        return actions, entry, messages
+
+    return actions, None, messages
+
+
+# ── Guardrails (soft layer) ───────────────────────────────────────────
+
+def guardrails_is_stale(memory_dir):
+    """Check if guardrails.md is missing or older than any feedback memory."""
+    guardrails_path = os.path.join(memory_dir, GUARDRAILS_FILE)
+    if not os.path.exists(guardrails_path):
+        # No guardrails file yet — only stale if there are feedback memories
+        # with behavioral rules.  For now, we don't create guardrails
+        # automatically; the user must express a rule first.
+        return False
+    try:
+        guardrails_mtime = os.path.getmtime(guardrails_path)
+    except OSError:
+        return False
+    # Check if any feedback memory is newer than guardrails.md.
+    for filepath in collect_memory_files(memory_dir):
+        basename = os.path.basename(filepath)
+        if not basename.startswith("feedback_"):
+            continue
+        try:
+            if os.path.getmtime(filepath) > guardrails_mtime:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def parse_guardrails(memory_dir):
+    """Parse existing guardrails.md, return list of rule summaries."""
+    guardrails_path = os.path.join(memory_dir, GUARDRAILS_FILE)
+    if not os.path.exists(guardrails_path):
+        return []
+    rules = []
+    try:
+        with open(guardrails_path) as f:
+            for line in f:
+                m = re.match(r"^- \*\*(.+?)\*\*\s*(?:—|--)\s*", line)
+                if m:
+                    rules.append(m.group(1))
+    except OSError:
+        pass
+    return rules
+
+
+def guardrails_system_message(memory_dir):
+    """Build a systemMessage instructing Claude to update guardrails.md."""
+    guardrails_path = os.path.join(memory_dir, GUARDRAILS_FILE)
+    feedback_files = [
+        os.path.basename(f)
+        for f in collect_memory_files(memory_dir)
+        if os.path.basename(f).startswith("feedback_")
+    ]
+    file_list = ", ".join(sorted(feedback_files))
+    return (
+        f"GUARDRAILS UPDATE NEEDED: The guardrails file at "
+        f"{guardrails_path} is stale — newer feedback memories exist. "
+        f"Before responding to the user, silently update it:\n"
+        f"1. Read all feedback memory files in the memory directory "
+        f"({file_list})\n"
+        f"2. Identify all behavioral rules — constraints, prohibitions, "
+        f"and required confirmations.\n"
+        f"3. Write {guardrails_path} using this exact format:\n"
+        f"---\n"
+        f"type: guardrails\n"
+        f"updated: YYYY-MM-DD\n"
+        f"rules: N\n"
+        f"---\n\n"
+        f"# Guardrails\n\n"
+        f"- **Rule name** — imperative description of the constraint\n"
+        f"- **Rule name** — imperative description of the constraint\n\n"
+        f"Focus on rules about actions Claude must NEVER take without "
+        f"explicit user confirmation. Each rule should be actionable "
+        f"and unambiguous."
+    )
+
+
+def build_guardrails_entry(rules):
+    """Build the MEMORY.md entry line for guardrails.
+
+    Args:
+        rules: list of rule name strings.
+    """
+    rule_list = ", ".join(r.lower() for r in rules)
+    if len(rule_list) > 120:
+        truncated = rule_list[:120]
+        last_comma = truncated.rfind(", ")
+        if last_comma > 0:
+            rule_list = truncated[:last_comma] + ", ..."
+        else:
+            rule_list = truncated[:117] + "..."
+    raw = f"- [Guardrails]({GUARDRAILS_FILE}) — {rule_list}"
+    return {
+        "title": "Guardrails",
+        "path": GUARDRAILS_FILE,
+        "desc": rule_list,
+        "raw": raw,
+    }
+
+
+def update_guardrails(memory_dir, dry_run=False, emit_messages=True):
+    """Check guardrails freshness, return (actions, entry_or_None, messages).
+
+    If guardrails.md is stale, emits a systemMessage for Claude to rewrite it.
+    If guardrails.md exists and is fresh, parses it for the MEMORY.md entry.
+
+    Returns:
+        actions: list of log strings
+        entry: MEMORY.md entry dict, or None
+        messages: list of systemMessage strings for Claude
+    """
+    actions = []
+    messages = []
+    guardrails_path = os.path.join(memory_dir, GUARDRAILS_FILE)
+
+    if guardrails_is_stale(memory_dir):
+        if not dry_run and emit_messages:
+            messages.append(guardrails_system_message(memory_dir))
+        actions.append("Guardrails: stale — requesting update.")
+
+    # If guardrails.md exists, parse it and build the MEMORY.md entry.
+    rules = parse_guardrails(memory_dir)
+    if rules:
+        entry = build_guardrails_entry(rules)
+        actions.append(
+            f"Guardrails: {len(rules)} rules in {GUARDRAILS_FILE}."
         )
         return actions, entry, messages
 

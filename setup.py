@@ -23,12 +23,18 @@ def get_rebalancer_path():
                         "rebalance.py")
 
 
-def generate_hooks(rebalancer_path):
+def get_guardrails_path():
+    """Return the absolute path to guardrails.py."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "guardrails.py")
+
+
+def generate_hooks(rebalancer_path, guardrails_path=None):
     """Generate the hook configuration dict."""
     # Escape for JSON embedding in shell commands.
     rp = rebalancer_path.replace('"', '\\"')
 
-    return {
+    hooks = {
         "PostToolUse": [{
             "matcher": "Write|Edit",
             "hooks": [{
@@ -70,6 +76,21 @@ def generate_hooks(rebalancer_path):
         }],
     }
 
+    # Add guardrails PreToolUse hook (hard layer).
+    if guardrails_path:
+        gp = guardrails_path.replace('"', '\\"')
+        hooks["PreToolUse"] = [{
+            "matcher": "Bash",
+            "hooks": [{
+                "type": "command",
+                "command": f'python3 "{gp}"',
+                "timeout": 5,
+                "statusMessage": "Checking guardrails..."
+            }]
+        }]
+
+    return hooks
+
 
 def read_settings(settings_path):
     """Read existing settings, or return empty dict."""
@@ -79,12 +100,17 @@ def read_settings(settings_path):
     return {}
 
 
+def _is_alzheimer_hook(command):
+    """Check if a hook command belongs to alzheimer."""
+    return ("rebalance.py" in command or "guardrails.py" in command)
+
+
 def merge_hooks(existing_hooks, new_hooks):
     """Merge new hooks into existing, avoiding duplicates.
 
     For each event, checks if an alzheimer hook already exists
-    (by looking for 'rebalance.py' in the command). If so, replaces it.
-    If not, appends it.
+    (by looking for 'rebalance.py' or 'guardrails.py' in the command).
+    If so, replaces it. If not, appends it.
     """
     merged = dict(existing_hooks)
 
@@ -93,23 +119,37 @@ def merge_hooks(existing_hooks, new_hooks):
             merged[event] = hook_groups
             continue
 
-        # Check if alzheimer hook already exists in this event.
+        # For each new hook group, find and replace existing alzheimer
+        # hook or append.
         existing_groups = merged[event]
-        alzheimer_idx = None
-        for i, group in enumerate(existing_groups):
-            for hook in group.get("hooks", []):
-                if "rebalance.py" in hook.get("command", ""):
-                    alzheimer_idx = i
+        for new_group in hook_groups:
+            # Determine if this new group is an alzheimer hook.
+            new_cmd = ""
+            for hook in new_group.get("hooks", []):
+                new_cmd = hook.get("command", "")
+                if _is_alzheimer_hook(new_cmd):
                     break
-            if alzheimer_idx is not None:
-                break
 
-        if alzheimer_idx is not None:
-            # Replace existing alzheimer hook group.
-            existing_groups[alzheimer_idx] = hook_groups[0]
-        else:
-            # Append new hook group.
-            existing_groups.extend(hook_groups)
+            if not _is_alzheimer_hook(new_cmd):
+                existing_groups.append(new_group)
+                continue
+
+            # Find the matching existing alzheimer hook to replace.
+            # Match by the specific script name (rebalance.py or
+            # guardrails.py) to avoid cross-replacement.
+            script = "guardrails.py" if "guardrails.py" in new_cmd else "rebalance.py"
+            replaced = False
+            for i, group in enumerate(existing_groups):
+                for hook in group.get("hooks", []):
+                    if script in hook.get("command", ""):
+                        existing_groups[i] = new_group
+                        replaced = True
+                        break
+                if replaced:
+                    break
+
+            if not replaced:
+                existing_groups.append(new_group)
 
     return merged
 
@@ -129,7 +169,7 @@ def install_hooks(settings_path, hooks):
 
 def check_hooks(settings_path, rebalancer_path):
     """Verify that alzheimer hooks are installed and point to the
-    correct rebalancer path."""
+    correct paths."""
     if not os.path.exists(settings_path):
         print(f"FAIL: {settings_path} does not exist.")
         return False
@@ -138,6 +178,7 @@ def check_hooks(settings_path, rebalancer_path):
     hooks = settings.get("hooks", {})
     ok = True
 
+    # Check rebalancer hooks.
     for event in ["PostToolUse", "SessionStart", "PreCompact"]:
         found = False
         for group in hooks.get(event, []):
@@ -150,10 +191,28 @@ def check_hooks(settings_path, rebalancer_path):
                               f"rebalance.py path.")
                         print(f"  Expected: {rebalancer_path}")
         if found:
-            print(f"  {event}: OK")
+            print(f"  {event} (rebalancer): OK")
         else:
-            print(f"  {event}: MISSING")
+            print(f"  {event} (rebalancer): MISSING")
             ok = False
+
+    # Check guardrails hook.
+    guardrails_path = get_guardrails_path()
+    found = False
+    for group in hooks.get("PreToolUse", []):
+        for hook in group.get("hooks", []):
+            cmd = hook.get("command", "")
+            if "guardrails.py" in cmd:
+                found = True
+                if guardrails_path not in cmd:
+                    print(f"WARN: PreToolUse hook points to different "
+                          f"guardrails.py path.")
+                    print(f"  Expected: {guardrails_path}")
+    if found:
+        print(f"  PreToolUse (guardrails): OK")
+    else:
+        print(f"  PreToolUse (guardrails): MISSING")
+        ok = False
 
     return ok
 
@@ -356,7 +415,8 @@ def main():
         sys.exit(0 if ok else 1)
 
     rebalancer_path = get_rebalancer_path()
-    hooks = generate_hooks(rebalancer_path)
+    guardrails_path = get_guardrails_path()
+    hooks = generate_hooks(rebalancer_path, guardrails_path)
 
     if args.check:
         ok = check_hooks(args.settings, rebalancer_path)
@@ -366,6 +426,7 @@ def main():
         settings = install_hooks(args.settings, hooks)
         print(f"Hooks installed in {args.settings}")
         print(f"Rebalancer: {rebalancer_path}")
+        print(f"Guardrails: {guardrails_path}")
         print("\nVerifying hooks:")
         check_hooks(args.settings, rebalancer_path)
 

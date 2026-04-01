@@ -575,7 +575,7 @@ The flow for a `"confirm"` rule:
 2. Block message tells Claude: "this requires user confirmation"
 3. Claude asks the user; user approves
 4. Claude calls `guardrails.py --exec "<command>"` via the Bash tool
-5. The hook recognizes `guardrails.py --exec` as a **self-whitelist**
+5. The hook recognizes `guardrails.py --exec` as a **self-allowlist**
    pattern and lets it through
 6. Python removes the rule, runs the command, re-adds the rule in a
    `try/finally` — the re-add is guaranteed regardless of command
@@ -593,14 +593,14 @@ type:
 | `"block"` | Always rejected; user must edit config to remove rule |
 | `"confirm"` | Rejected on first attempt; approved execution via Python wrapper with guaranteed rule restoration |
 
-The self-whitelist is a simple pattern match: the hook checks whether
+The self-allowlist is a simple pattern match: the hook checks whether
 the Bash command is an invocation of `guardrails.py --exec` and skips
 rule checking for that specific pattern. This is a narrow, predictable
 exception — not a general bypass mechanism.
 
 Broad `"confirm"` rules (e.g., matching all Bash commands) are an edge
 case but must be handled gracefully. A user might set one intentionally
-or accidentally. The self-whitelist ensures the system remains
+or accidentally. The self-allowlist ensures the system remains
 functional: the only Bash command that bypasses the rule is the
 guardrails wrapper itself.
 

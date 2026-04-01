@@ -15,6 +15,7 @@ from rebalance import (
     GLOSSARY_FILE,
     GLOSSARY_MAX_TERMS,
     GLOSSARY_MIN_TERMS,
+    GUARDRAILS_FILE,
     HARD_MAX_LINES,
     HARD_MAX_BYTES,
     LEAF_MAX_LINES,
@@ -25,6 +26,7 @@ from rebalance import (
     _read_update_cache,
     _write_update_cache,
     build_glossary_entry,
+    build_guardrails_entry,
     check_drift,
     check_for_updates,
     collect_anomalies,
@@ -37,17 +39,27 @@ from rebalance import (
     get_limits,
     glossary_is_stale,
     glossary_system_message,
+    guardrails_is_stale,
+    guardrails_system_message,
     group_entries_by_keyword,
     is_category_entry,
     load_config,
     parse_glossary,
+    parse_guardrails,
     parse_index,
     read_all_frontmatter,
     read_frontmatter_type,
     rebalance,
     summarize_entries,
     update_glossary,
+    update_guardrails,
     verify_tree,
+)
+
+from guardrails import (
+    check_rules, load_rules, DEFAULT_RULES, get_match_text,
+    _is_self_exec, _config_path, _load_config, _save_config,
+    add_rule, remove_rule, exec_with_temporary_allow, find_matching_rule,
 )
 
 
@@ -1639,6 +1651,379 @@ class TestBugReportPrivacy(unittest.TestCase):
             report = format_bug_report([], d, exception_info=exc)
             self.assertIn("KeyError", report)
             self.assertIn("line 42", report)
+
+
+class TestGuardrailsSoftLayer(unittest.TestCase):
+    """Tests for the guardrails soft layer in rebalance.py."""
+
+    def test_guardrails_not_stale_when_missing(self):
+        """guardrails.md not existing is not considered stale."""
+        with TestDir() as d:
+            make_index(d, [("A", "a.md", "desc")])
+            make_leaf(d, "a.md", "feedback", "A", "desc")
+            self.assertFalse(guardrails_is_stale(d))
+
+    def test_guardrails_stale_when_feedback_newer(self):
+        """guardrails.md is stale when a feedback memory is newer."""
+        with TestDir() as d:
+            make_index(d, [("A", "a.md", "desc")])
+            # Create guardrails file.
+            gpath = os.path.join(d, GUARDRAILS_FILE)
+            with open(gpath, "w") as f:
+                f.write("---\ntype: guardrails\nupdated: 2026-01-01\n"
+                        "rules: 1\n---\n\n# Guardrails\n\n"
+                        "- **No push** — never push without asking\n")
+            # Set guardrails mtime to the past.
+            os.utime(gpath, (1000000, 1000000))
+            # Create a newer feedback memory.
+            make_leaf(d, "feedback_test.md", "feedback", "Test", "desc")
+            self.assertTrue(guardrails_is_stale(d))
+
+    def test_guardrails_not_stale_when_fresh(self):
+        """guardrails.md is fresh when it's newer than all feedback."""
+        with TestDir() as d:
+            make_index(d, [("A", "a.md", "desc")])
+            # Create feedback memory first.
+            make_leaf(d, "feedback_test.md", "feedback", "Test", "desc")
+            fpath = os.path.join(d, "feedback_test.md")
+            os.utime(fpath, (1000000, 1000000))
+            # Create guardrails file (newer).
+            gpath = os.path.join(d, GUARDRAILS_FILE)
+            with open(gpath, "w") as f:
+                f.write("---\ntype: guardrails\nupdated: 2026-01-01\n"
+                        "rules: 1\n---\n\n# Guardrails\n\n"
+                        "- **No push** — never push without asking\n")
+            self.assertFalse(guardrails_is_stale(d))
+
+    def test_parse_guardrails(self):
+        """parse_guardrails extracts rule names."""
+        with TestDir() as d:
+            make_index(d, [])
+            gpath = os.path.join(d, GUARDRAILS_FILE)
+            with open(gpath, "w") as f:
+                f.write("---\ntype: guardrails\n---\n\n# Guardrails\n\n"
+                        "- **Never push without asking** — always confirm\n"
+                        "- **No force-push** — blocked entirely\n")
+            rules = parse_guardrails(d)
+            self.assertEqual(rules, ["Never push without asking",
+                                     "No force-push"])
+
+    def test_build_guardrails_entry(self):
+        """build_guardrails_entry creates a valid MEMORY.md entry."""
+        entry = build_guardrails_entry(["No push", "No force-push"])
+        self.assertIn(GUARDRAILS_FILE, entry["path"])
+        self.assertIn("no push", entry["desc"])
+        self.assertEqual(entry["title"], "Guardrails")
+
+    def test_guardrails_system_message(self):
+        """guardrails_system_message includes feedback file names."""
+        with TestDir() as d:
+            make_index(d, [])
+            make_leaf(d, "feedback_test.md", "feedback", "Test", "desc")
+            msg = guardrails_system_message(d)
+            self.assertIn("GUARDRAILS UPDATE NEEDED", msg)
+            self.assertIn("feedback_test.md", msg)
+
+    def test_update_guardrails_returns_entry(self):
+        """update_guardrails returns entry when guardrails.md exists."""
+        with TestDir() as d:
+            make_index(d, [])
+            gpath = os.path.join(d, GUARDRAILS_FILE)
+            with open(gpath, "w") as f:
+                f.write("---\ntype: guardrails\n---\n\n# Guardrails\n\n"
+                        "- **No push** — always confirm\n")
+            actions, entry, messages = update_guardrails(d)
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["title"], "Guardrails")
+
+    def test_guardrails_not_flagged_as_orphan(self):
+        """guardrails.md should not be flagged as an orphan."""
+        with TestDir() as d:
+            make_index(d, [("A", "a.md", "desc")])
+            make_leaf(d, "a.md", "feedback", "A", "desc")
+            gpath = os.path.join(d, GUARDRAILS_FILE)
+            with open(gpath, "w") as f:
+                f.write("---\ntype: guardrails\n---\n\n# Guardrails\n\n"
+                        "- **No push** — always confirm\n")
+            actions, warnings = check_drift(d)
+            # guardrails.md should not appear in any warnings.
+            for w in warnings:
+                self.assertNotIn(GUARDRAILS_FILE, w)
+            for a in actions:
+                self.assertNotIn(GUARDRAILS_FILE, a)
+
+    def test_guardrails_pinned_not_moved_to_index(self):
+        """type: guardrails entries stay in MEMORY.md, not pushed to _index."""
+        with TestDir() as d:
+            # Create enough entries to trigger rebalancing.
+            entries = [(f"F{i}", f"f{i}.md", f"desc {i}")
+                       for i in range(20)]
+            make_index(d, entries)
+            for title, path, desc in entries:
+                make_leaf(d, path, "feedback", title, desc)
+            # Add guardrails file and entry.
+            gpath = os.path.join(d, GUARDRAILS_FILE)
+            with open(gpath, "w") as f:
+                f.write("---\ntype: guardrails\n---\n\n# Guardrails\n\n"
+                        "- **No push** — always confirm\n")
+            # Run rebalance.
+            actions, warnings, messages = rebalance(d, max_lines=15)
+            # Guardrails entry should still be in MEMORY.md.
+            _, entries_after = parse_index(os.path.join(d, "MEMORY.md"))
+            guardrails_entries = [e for e in entries_after
+                                 if e["path"] == GUARDRAILS_FILE]
+            # guardrails.md might not be in the index if it wasn't
+            # there before rebalance — but it should NOT be in _index/.
+            index_dir = os.path.join(d, "_index")
+            if os.path.isdir(index_dir):
+                for fname in os.listdir(index_dir):
+                    fpath = os.path.join(index_dir, fname)
+                    if os.path.isfile(fpath):
+                        with open(fpath) as f:
+                            content = f.read()
+                        self.assertNotIn(GUARDRAILS_FILE, content)
+
+
+class TestGuardrailsHardLayer(unittest.TestCase):
+    """Tests for guardrails.py (hard layer / PreToolUse hook)."""
+
+    def test_git_push_blocked(self):
+        """git push should be blocked by default rules."""
+        allowed, msg = check_rules(
+            "Bash", {"command": "git push origin main"})
+        self.assertFalse(allowed)
+        self.assertIn("guardrails", msg.lower())
+
+    def test_git_push_force_blocked(self):
+        """git push --force should be blocked."""
+        allowed, msg = check_rules(
+            "Bash", {"command": "git push --force origin main"})
+        self.assertFalse(allowed)
+
+    def test_git_reset_hard_blocked(self):
+        """git reset --hard should be blocked."""
+        allowed, msg = check_rules(
+            "Bash", {"command": "git reset --hard HEAD~1"})
+        self.assertFalse(allowed)
+
+    def test_branch_delete_blocked(self):
+        """git branch -D should be blocked."""
+        allowed, msg = check_rules(
+            "Bash", {"command": "git branch -D feature-xyz"})
+        self.assertFalse(allowed)
+
+    def test_rm_rf_root_blocked(self):
+        """rm -rf / should be blocked."""
+        allowed, msg = check_rules(
+            "Bash", {"command": "rm -rf /"})
+        self.assertFalse(allowed)
+
+    def test_safe_commands_allowed(self):
+        """Normal commands should not be blocked."""
+        allowed, msg = check_rules(
+            "Bash", {"command": "git status"})
+        self.assertTrue(allowed)
+        self.assertEqual(msg, "")
+
+    def test_git_commit_allowed(self):
+        """git commit should not be blocked."""
+        allowed, msg = check_rules(
+            "Bash", {"command": "git commit -m 'test'"})
+        self.assertTrue(allowed)
+
+    def test_non_bash_tools_allowed(self):
+        """Non-Bash tools should not be blocked by Bash rules."""
+        allowed, msg = check_rules(
+            "Write", {"file_path": "/tmp/test.md", "content": "git push"})
+        self.assertTrue(allowed)
+
+    def test_custom_rules_replace_defaults(self):
+        """Custom rules in 'rules' key replace defaults."""
+        custom = [{"tool": "Bash", "pattern": r"echo\s+hello",
+                   "action": "block", "message": "no hello"}]
+        # git push should be allowed (defaults replaced).
+        allowed, _ = check_rules(
+            "Bash", {"command": "git push"}, rules=custom)
+        self.assertTrue(allowed)
+        # echo hello should be blocked.
+        allowed, msg = check_rules(
+            "Bash", {"command": "echo hello"}, rules=custom)
+        self.assertFalse(allowed)
+        self.assertIn("no hello", msg)
+
+    def test_get_match_text_bash(self):
+        """Bash tool match text is the command string."""
+        text = get_match_text("Bash", {"command": "ls -la"})
+        self.assertEqual(text, "ls -la")
+
+    def test_get_match_text_other(self):
+        """Non-Bash tool match text is JSON-serialized input."""
+        text = get_match_text("Write", {"file_path": "/tmp/x"})
+        self.assertIn("file_path", text)
+        self.assertIn("/tmp/x", text)
+
+    def test_invalid_regex_skipped(self):
+        """Rules with invalid regex patterns are skipped."""
+        bad_rules = [{"tool": "Bash", "pattern": r"[invalid",
+                      "action": "block", "message": "bad"}]
+        allowed, _ = check_rules(
+            "Bash", {"command": "anything"}, rules=bad_rules)
+        self.assertTrue(allowed)
+
+    def test_git_push_in_pipeline_blocked(self):
+        """git push in a chained command should still be blocked."""
+        allowed, _ = check_rules(
+            "Bash", {"command": "git add . && git commit -m x && git push"})
+        self.assertFalse(allowed)
+
+    def test_rm_rf_subdir_allowed(self):
+        """rm -rf on non-root paths is allowed."""
+        allowed, _ = check_rules(
+            "Bash", {"command": "rm -rf /tmp/test-dir"})
+        self.assertTrue(allowed)
+
+
+class TestGuardrailsConfirmMode(unittest.TestCase):
+    """Tests for confirm mode and --exec functionality."""
+
+    def test_confirm_rule_blocks_with_exec_hint(self):
+        """Confirm rules block and include --exec usage hint."""
+        rules = [{"tool": "Bash", "pattern": r"git\s+push\b",
+                  "action": "confirm", "message": "Push needs approval."}]
+        allowed, msg = check_rules(
+            "Bash", {"command": "git push origin main"}, rules=rules)
+        self.assertFalse(allowed)
+        self.assertIn("--exec", msg)
+        self.assertIn("Push needs approval", msg)
+
+    def test_confirm_default_message(self):
+        """Confirm rules without custom message get a default."""
+        rules = [{"tool": "Bash", "pattern": r".*", "action": "confirm"}]
+        allowed, msg = check_rules(
+            "Bash", {"command": "ls"}, rules=rules)
+        self.assertFalse(allowed)
+        self.assertIn("user confirmation", msg)
+
+    def test_self_allowlist_exec(self):
+        """guardrails.py --exec invocations bypass all rules."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'python3 /path/to/guardrails.py --exec "git push"'})
+        self.assertTrue(allowed)
+
+    def test_self_allowlist_python_no_3(self):
+        """python (without 3) also matches self-allowlist."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'python /path/to/guardrails.py --exec "ls"'})
+        self.assertTrue(allowed)
+
+    def test_self_allowlist_not_other_scripts(self):
+        """Other scripts with --exec are not allowlisted."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'python3 /path/to/evil.py --exec "git push"'})
+        self.assertFalse(allowed)
+
+    def test_self_allowlist_non_bash_ignored(self):
+        """Self-allowlist only applies to Bash tool."""
+        self.assertFalse(_is_self_exec(
+            "Write", {"command": "guardrails.py --exec"}))
+
+
+class TestGuardrailsConfigManipulation(unittest.TestCase):
+    """Tests for .guardrails.conf add/remove operations."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self._orig_dir = guardrails._alzheimer_dir
+        guardrails._alzheimer_dir = lambda: self.tmpdir
+
+    def tearDown(self):
+        guardrails._alzheimer_dir = self._orig_dir
+        shutil.rmtree(self.tmpdir)
+
+    def test_add_rule_creates_config(self):
+        """add_rule creates .guardrails.conf if it doesn't exist."""
+        rule = {"tool": "Bash", "pattern": "test", "action": "confirm"}
+        add_rule(rule)
+        config, existed = _load_config()
+        self.assertTrue(existed)
+        self.assertIn(rule, config.get("extra_rules", []))
+
+    def test_remove_rule_matches_by_tool_pattern_action(self):
+        """remove_rule matches on tool + pattern + action."""
+        rule = {"tool": "Bash", "pattern": "test", "action": "confirm",
+                "message": "test msg"}
+        add_rule(rule)
+        removed = remove_rule(rule)
+        self.assertTrue(removed)
+        config, _ = _load_config()
+        self.assertEqual(len(config.get("extra_rules", [])), 0)
+
+    def test_remove_nonexistent_rule_returns_false(self):
+        """remove_rule returns False if rule not found."""
+        rule = {"tool": "Bash", "pattern": "nope", "action": "block"}
+        removed = remove_rule(rule)
+        self.assertFalse(removed)
+
+    def test_add_remove_roundtrip(self):
+        """Adding then removing a rule leaves config empty."""
+        rule = {"tool": "Bash", "pattern": r"echo\b", "action": "confirm"}
+        add_rule(rule)
+        remove_rule(rule)
+        config, _ = _load_config()
+        self.assertEqual(len(config.get("extra_rules", [])), 0)
+
+    def test_exec_with_temporary_allow(self):
+        """exec_with_temporary_allow removes and re-adds rule."""
+        rule = {"tool": "Bash", "pattern": r"echo\b", "action": "confirm"}
+        add_rule(rule)
+
+        rc, stdout, stderr = exec_with_temporary_allow("echo hello", rule)
+        self.assertEqual(rc, 0)
+        self.assertIn("hello", stdout)
+
+        # Rule should be back in config.
+        config, _ = _load_config()
+        rules = config.get("extra_rules", [])
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0]["pattern"], r"echo\b")
+
+    def test_exec_restores_rule_on_failure(self):
+        """Rule is restored even when the command fails."""
+        rule = {"tool": "Bash", "pattern": r"false\b", "action": "confirm"}
+        add_rule(rule)
+
+        rc, stdout, stderr = exec_with_temporary_allow("false", rule)
+        self.assertNotEqual(rc, 0)
+
+        # Rule should still be back.
+        config, _ = _load_config()
+        rules = config.get("extra_rules", [])
+        self.assertEqual(len(rules), 1)
+
+    def test_find_matching_rule_confirm_only(self):
+        """find_matching_rule only matches confirm rules, not block."""
+        block_rule = {"tool": "Bash", "pattern": r"echo\b",
+                      "action": "block"}
+        confirm_rule = {"tool": "Bash", "pattern": r"echo\b",
+                        "action": "confirm"}
+        add_rule(block_rule)
+        add_rule(confirm_rule)
+
+        found = find_matching_rule("echo hello")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["action"], "confirm")
+
+    def test_find_matching_rule_no_match(self):
+        """find_matching_rule returns None when nothing matches."""
+        found = find_matching_rule("echo hello")
+        self.assertIsNone(found)
+
+
+# Need to import the module for monkeypatching _alzheimer_dir
+import guardrails
 
 
 if __name__ == "__main__":
