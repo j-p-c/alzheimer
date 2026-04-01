@@ -321,10 +321,10 @@ def main_hook():
     if allowed:
         sys.exit(0)
     else:
-        # Output a JSON message that Claude will see as the hook failure
-        # reason, then exit non-zero to block the tool call.
-        print(json.dumps({"error": message}))
-        sys.exit(1)
+        # Exit code 2 blocks the tool call and shows stderr to the model.
+        # Exit code 1 would only show stderr to the user without blocking.
+        print(json.dumps({"error": message}), file=sys.stderr)
+        sys.exit(2)
 
 
 def main_exec(command):
