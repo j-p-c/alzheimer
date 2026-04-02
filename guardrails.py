@@ -300,7 +300,7 @@ def find_matching_rule(command):
 def main():
     """Entry point. Dispatches to hook mode or --exec mode."""
     if len(sys.argv) >= 3 and sys.argv[1] == "--exec":
-        main_exec(sys.argv[2])
+        main_exec(" ".join(sys.argv[2:]))
     else:
         main_hook()
 

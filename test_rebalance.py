@@ -2062,6 +2062,17 @@ class TestGuardrailsConfigManipulation(unittest.TestCase):
         found = find_matching_rule("echo hello")
         self.assertIsNone(found)
 
+    def test_exec_multi_arg_command(self):
+        """--exec with unquoted multi-word command joins all args."""
+        import subprocess
+        gpy = os.path.join(os.path.dirname(__file__), "guardrails.py")
+        result = subprocess.run(
+            ["python3", gpy, "--exec", "echo", "hello", "world"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("hello world", result.stdout)
+
 
 # Need to import the module for monkeypatching _alzheimer_dir
 import guardrails

@@ -256,11 +256,13 @@ a small task. Others run a single long-lived instance as an ongoing
 collaborator. Claude Code itself is agnostic — it works either way.
 
 Alzheimer is opinionated: it is designed for **long-lived, persistent
-collaboration**. It assumes you want Claude to remember everything —
-not just facts and decisions, but the flow of work, the reasoning
-behind choices, the side conversations that inform future direction.
-Every feature in Alzheimer optimizes for context preservation over
-token efficiency:
+collaboration**. It assumes you want Claude to be a continuous
+collaborator — not a thousand task bots, but a single entity that
+remembers you, adapts to you, and maintains its own thread of
+understanding across sessions. The difference between a tool and a
+collaborator is memory. Alzheimer provides the memory; the rest is
+already there. Every feature in Alzheimer optimizes for context
+preservation over token efficiency:
 
 - **Memory rebalancing** keeps your knowledge base structured as it
   grows, instead of letting it overflow and silently lose entries.
@@ -343,7 +345,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-177 tests covering:
+178 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
