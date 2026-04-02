@@ -212,6 +212,7 @@ def check_recurring_reminders(reminders, now=None):
 # ── Recurring state persistence ──────────────────────────────────────
 
 RECURRING_STATE_FILE = os.path.expanduser("~/.alzheimer-recurring-state")
+FIRE_COUNT_FILE = os.path.expanduser("~/.alzheimer-reminder-fire-count")
 
 
 def _load_recurring_state():
@@ -232,6 +233,62 @@ def _save_recurring_state(state):
             json.dump(state, f)
     except OSError:
         pass
+
+
+# ── Fire count (escalation pressure) ────────────────────────────────
+
+def _read_fire_count():
+    """Read how many consecutive times reminders have fired without being cleared."""
+    if not os.path.exists(FIRE_COUNT_FILE):
+        return 0
+    try:
+        with open(FIRE_COUNT_FILE) as f:
+            return int(f.read().strip())
+    except (ValueError, OSError):
+        return 0
+
+
+def _write_fire_count(count):
+    """Write the fire count."""
+    try:
+        with open(FIRE_COUNT_FILE, "w") as f:
+            f.write(str(count))
+    except OSError:
+        pass
+
+
+def _reset_fire_count():
+    """Reset fire count to zero (reminders were acted on)."""
+    _write_fire_count(0)
+
+
+def escalation_prefix(fire_count):
+    """Return escalation prefix based on how many times reminders were ignored.
+
+    Pressure increases with each consecutive firing:
+      1: normal
+      2: gentle nudge
+      3-4: warning
+      5+: critical — impossible to justify ignoring
+    """
+    if fire_count <= 1:
+        return ""
+    elif fire_count == 2:
+        return (
+            f"NOTE: These reminders have fired {fire_count} times "
+            "without being acted on. Please address them when you can.\n\n"
+        )
+    elif fire_count <= 4:
+        return (
+            f"WARNING: These reminders have been ignored {fire_count} "
+            "times. Act on them before continuing with other work.\n\n"
+        )
+    else:
+        return (
+            f"CRITICAL: These reminders have been ignored {fire_count} "
+            "times. STOP and address them NOW before responding to "
+            "anything else.\n\n"
+        )
 
 
 # ── Main ─────────────────────────────────────────────────────────────
@@ -277,16 +334,24 @@ def main():
 
     due = collect_due_reminders()
     if not due:
+        # Nothing due — reset fire count (reminders were acted on).
+        _reset_fire_count()
         sys.exit(0)
 
+    # Increment fire count (reminders are due but haven't been cleared).
+    fire_count = _read_fire_count() + 1
+    _write_fire_count(fire_count)
+
     # Output as systemMessage for additionalContext.
-    lines = ["Alzheimer reminders due:"]
+    prefix = escalation_prefix(fire_count)
+    lines = [f"{prefix}Alzheimer reminders due:"]
     for item in due:
         lines.append(f"  • {item}")
     lines.append("")
     lines.append(
         "Act on these reminders: bring them up with the user, "
-        "then remove completed one-shot reminders from reminders.md."
+        "then remove completed one-shot reminders from reminders.md. "
+        "Ignoring this will cause it to fire again with increasing urgency."
     )
 
     message = {"systemMessage": "\n".join(lines)}

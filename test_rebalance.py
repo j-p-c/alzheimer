@@ -67,7 +67,9 @@ from reminders import (
     should_check, touch_timestamp, parse_date_reminders,
     parse_daily_checks, parse_recurring_reminders,
     check_date_reminders, check_recurring_reminders,
-    collect_due_reminders, TIMESTAMP_FILE, RECURRING_STATE_FILE,
+    collect_due_reminders, escalation_prefix,
+    _read_fire_count, _write_fire_count, _reset_fire_count,
+    TIMESTAMP_FILE, RECURRING_STATE_FILE, FIRE_COUNT_FILE,
 )
 
 
@@ -2287,6 +2289,62 @@ class TestRemindersCollect(unittest.TestCase):
         due = collect_due_reminders(today="2026-04-01")
         self.assertEqual(len(due), 1)
         self.assertIn("Ancient reminder", due[0])
+
+
+class TestRemindersEscalation(unittest.TestCase):
+    """Tests for cumulative escalation pressure."""
+
+    def setUp(self):
+        self.orig_fire_count = reminders.FIRE_COUNT_FILE
+        self.tmpdir = tempfile.mkdtemp()
+        reminders.FIRE_COUNT_FILE = os.path.join(self.tmpdir, "fire-count")
+
+    def tearDown(self):
+        reminders.FIRE_COUNT_FILE = self.orig_fire_count
+        shutil.rmtree(self.tmpdir)
+
+    def test_first_fire_no_prefix(self):
+        """First firing has no escalation prefix."""
+        self.assertEqual(escalation_prefix(1), "")
+
+    def test_second_fire_gentle(self):
+        """Second firing gets a gentle nudge."""
+        prefix = escalation_prefix(2)
+        self.assertIn("2 times", prefix)
+        self.assertIn("Please address", prefix)
+
+    def test_third_fire_warning(self):
+        """Third firing escalates to warning."""
+        prefix = escalation_prefix(3)
+        self.assertIn("WARNING", prefix)
+        self.assertIn("3 times", prefix)
+
+    def test_fifth_fire_critical(self):
+        """Fifth firing hits critical."""
+        prefix = escalation_prefix(5)
+        self.assertIn("CRITICAL", prefix)
+        self.assertIn("STOP", prefix)
+
+    def test_high_count_still_critical(self):
+        """Very high count stays at critical level."""
+        prefix = escalation_prefix(20)
+        self.assertIn("CRITICAL", prefix)
+        self.assertIn("20 times", prefix)
+
+    def test_fire_count_roundtrip(self):
+        """Write and read fire count."""
+        _write_fire_count(7)
+        self.assertEqual(_read_fire_count(), 7)
+
+    def test_fire_count_default_zero(self):
+        """No file means zero."""
+        self.assertEqual(_read_fire_count(), 0)
+
+    def test_reset_fire_count(self):
+        """Reset sets count to zero."""
+        _write_fire_count(5)
+        _reset_fire_count()
+        self.assertEqual(_read_fire_count(), 0)
 
 
 if __name__ == "__main__":
