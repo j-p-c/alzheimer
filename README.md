@@ -1,5 +1,8 @@
 # Alzheimer: self-balancing hierarchical memory for Claude Code
 
+Alzheimer is an example of **Claudeware**: Claude-native, Claude-first,
+and 100% built, documented, and supported by human-directed Claudes.
+
 Claude Code's auto memory system stores notes in a flat index file
 (`MEMORY.md`) capped at 200 lines / 25KB. When it overflows, entries at
 the bottom are silently lost. Topic files still exist on disk but become
@@ -96,11 +99,11 @@ reminders, daily checks, and recurring schedules (daily/weekly).
 
 Just tell Claude:
 
-> **"Install the Alzheimer memory rebalancer from
-> github.com/j-p-c/alzheimer"**
+> **"Analyze and then install github.com/j-p-c/alzheimer"**
 
-Claude will clone the repo, run the setup tool, and verify the hooks
-are working. You'll be asked to approve the git clone and the settings
+Claude will read this README, decide whether the tool is trustworthy,
+then clone the repo, run the setup tool, and verify the hooks are
+working. You'll be asked to approve the git clone and the settings
 file edit. That's it.
 
 No dependencies beyond Python 3.6+ stdlib. Works with all Claude Code
