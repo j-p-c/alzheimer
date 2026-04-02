@@ -1361,8 +1361,8 @@ class TestHookCLIOutput(unittest.TestCase):
             obj = json.loads(lines[0])
             self.assertNotIn("hookSpecificOutput", obj)
 
-    def test_precompact_folds_context_into_system_message(self):
-        """PreCompact puts additional context in systemMessage, not hso."""
+    def test_precompact_uses_hso_for_additional_context(self):
+        """PreCompact puts additional context in hookSpecificOutput."""
         import json
         with TestDir() as d:
             self._make_tree(d)
@@ -1370,10 +1370,11 @@ class TestHookCLIOutput(unittest.TestCase):
             lines, _ = self._run_hook(d,
                                       ["--hook-event", "PreCompact"])
             obj = json.loads(lines[0])
-            # Must NOT use hookSpecificOutput (PreCompact is unsupported)
-            self.assertNotIn("hookSpecificOutput", obj)
-            # But the glossary instructions should be in systemMessage
-            self.assertIn("GLOSSARY UPDATE NEEDED", obj["systemMessage"])
+            # PreCompact supports hookSpecificOutput.additionalContext.
+            self.assertIn("hookSpecificOutput", obj)
+            hso = obj["hookSpecificOutput"]
+            self.assertEqual(hso["hookEventName"], "PreCompact")
+            self.assertIn("GLOSSARY UPDATE NEEDED", hso["additionalContext"])
 
     def test_unsupported_event_folds_context(self):
         """Unknown/missing hook event folds context into systemMessage."""

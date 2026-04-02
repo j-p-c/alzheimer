@@ -2001,7 +2001,8 @@ def main():
             # events (SessionStart, PreCompact), fold into systemMessage
             # so the instructions reach Claude instead of being silently
             # dropped by hook output validation.
-            hso_supported = ("PostToolUse", "UserPromptSubmit")
+            hso_supported = ("PostToolUse", "UserPromptSubmit",
+                                "SessionStart", "PreCompact")
             if args.hook_event and args.hook_event in hso_supported:
                 output["hookSpecificOutput"] = {
                     "additionalContext": additional_text,
