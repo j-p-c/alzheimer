@@ -134,9 +134,8 @@ as complete.
 If you prefer to do it yourself:
 
 ```bash
-# Clone into your working directory (wherever you launch Claude from)
-git clone https://github.com/j-p-c/alzheimer.git
-cd alzheimer
+git clone https://github.com/j-p-c/alzheimer.git ~/.claude/alzheimer
+cd ~/.claude/alzheimer
 python3 setup.py --install
 python3 setup.py --check
 ```
