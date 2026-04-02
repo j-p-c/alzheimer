@@ -22,7 +22,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -1981,6 +1981,11 @@ def main():
                 f"then explain the situation to the user."
             )
         if additional:
+            additional.append(
+                "When narrating actions triggered by these instructions, "
+                "use [Alzheimer: ...] format so the user can visually "
+                "distinguish housekeeping from the conversation."
+            )
             additional_text = "\n\n".join(additional)
             # hookSpecificOutput with additionalContext is only valid
             # for PostToolUse and UserPromptSubmit events.  For other
