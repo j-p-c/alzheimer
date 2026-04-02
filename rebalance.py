@@ -22,7 +22,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.1"
+VERSION = "0.7.2"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -404,22 +404,24 @@ def _alzheimer_dir():
 
 
 def _read_update_cache(cache_path):
-    """Read the update cache file.  Returns (timestamp, behind_count) or
-    (0, 0) if the cache is missing or unreadable."""
+    """Read the update cache file.  Returns (timestamp, behind_count,
+    emitted_at) or (0, 0, 0) if the cache is missing or unreadable."""
     try:
         with open(cache_path) as f:
             data = json.load(f)
-        return data.get("timestamp", 0), data.get("behind", 0)
+        return (data.get("timestamp", 0), data.get("behind", 0),
+                data.get("emitted_at", 0))
     except (OSError, json.JSONDecodeError, ValueError):
-        return 0, 0
+        return 0, 0, 0
 
 
-def _write_update_cache(cache_path, behind):
+def _write_update_cache(cache_path, behind, emitted_at=0):
     """Write the update cache file."""
     import time
     try:
         with open(cache_path, "w") as f:
-            json.dump({"timestamp": time.time(), "behind": behind}, f)
+            json.dump({"timestamp": time.time(), "behind": behind,
+                        "emitted_at": emitted_at}, f)
     except OSError:
         pass
 
@@ -445,12 +447,18 @@ def check_for_updates(alzheimer_dir=None, force=False):
         return 0, None
 
     cache_path = os.path.join(alzheimer_dir, UPDATE_CACHE_FILE)
-    cached_ts, cached_behind = _read_update_cache(cache_path)
+    cached_ts, cached_behind, cached_emitted = _read_update_cache(cache_path)
 
     now = time.time()
     if not force and (now - cached_ts) < UPDATE_CHECK_INTERVAL:
         # Cache is fresh — return cached result without fetching.
         if cached_behind > 0:
+            # Suppress duplicate messages: if we already emitted this
+            # update message within the last 60 seconds (e.g. from a
+            # prior memory directory in the same session), skip it.
+            if cached_emitted and (now - cached_emitted) < 60:
+                return 0, None
+            _write_update_cache(cache_path, cached_behind, emitted_at=now)
             return cached_behind, (
                 f"alzheimer update available: {cached_behind} new "
                 f"commit(s) on origin/main. Tell the user and offer "
@@ -481,7 +489,8 @@ def check_for_updates(alzheimer_dir=None, force=False):
         _write_update_cache(cache_path, 0)
         return 0, None
 
-    _write_update_cache(cache_path, behind)
+    _write_update_cache(cache_path, behind,
+                        emitted_at=time.time() if behind > 0 else 0)
 
     if behind > 0:
         return behind, (

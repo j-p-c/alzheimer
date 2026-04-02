@@ -417,6 +417,15 @@ def do_update(settings_path):
         print(f"git pull failed: {result.stderr.strip()}")
         return False
     print(f"  {result.stdout.strip()}")
+
+    # Clear the update cache so the hook stops reporting "update available".
+    cache_path = os.path.join(alzheimer_dir, ".alzheimer.lastcheck")
+    try:
+        import time, json as _json
+        with open(cache_path, "w") as f:
+            _json.dump({"timestamp": time.time(), "behind": 0}, f)
+    except OSError:
+        pass
     print()
 
     # Delegate to --install using the (potentially updated) code.
