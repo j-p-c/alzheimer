@@ -343,7 +343,7 @@ cd /path/to/alzheimer/
 python3 -m unittest test_rebalance -v
 ```
 
-175 tests covering:
+177 tests covering:
 - Index parsing (standard and edge cases)
 - Frontmatter reading
 - Keyword extraction and grouping
@@ -358,7 +358,7 @@ python3 -m unittest test_rebalance -v
 - Dry-run safety
 - Idempotency
 - Inline content detection (skip rebalance, preserve data, threshold)
-- Hook CLI output format (single JSON, additionalContext routing)
+- Hook CLI output format (single JSON, additionalContext routing, unsupported-event fallback)
 - Config file loading (.alzheimer.conf)
 - Limit resolution priority (CLI > config > defaults)
 - Glossary integration (staleness detection, parsing, pinning)

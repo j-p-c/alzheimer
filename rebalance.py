@@ -22,7 +22,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -1968,10 +1968,20 @@ def main():
                 f"then explain the situation to the user."
             )
         if additional:
-            hso = {"additionalContext": "\n\n".join(additional)}
-            if args.hook_event:
-                hso["hookEventName"] = args.hook_event
-            output["hookSpecificOutput"] = hso
+            additional_text = "\n\n".join(additional)
+            # hookSpecificOutput with additionalContext is only valid
+            # for PostToolUse and UserPromptSubmit events.  For other
+            # events (SessionStart, PreCompact), fold into systemMessage
+            # so the instructions reach Claude instead of being silently
+            # dropped by hook output validation.
+            hso_supported = ("PostToolUse", "UserPromptSubmit")
+            if args.hook_event and args.hook_event in hso_supported:
+                output["hookSpecificOutput"] = {
+                    "additionalContext": additional_text,
+                    "hookEventName": args.hook_event,
+                }
+            else:
+                output["systemMessage"] += "\n" + additional_text
 
         print(json.dumps(output))
     else:

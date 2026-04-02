@@ -1326,8 +1326,9 @@ class TestHookCLIOutput(unittest.TestCase):
         import json
         with TestDir() as d:
             self._make_tree(d)
-            # No glossary file = stale
-            lines, _ = self._run_hook(d)
+            # No glossary file = stale; use PostToolUse (supports hso)
+            lines, _ = self._run_hook(d,
+                                      ["--hook-event", "PostToolUse"])
             obj = json.loads(lines[0])
             self.assertIn("hookSpecificOutput", obj)
             self.assertIn("additionalContext",
@@ -1359,6 +1360,31 @@ class TestHookCLIOutput(unittest.TestCase):
                                       ["--hook-event", "SessionStart"])
             obj = json.loads(lines[0])
             self.assertNotIn("hookSpecificOutput", obj)
+
+    def test_precompact_folds_context_into_system_message(self):
+        """PreCompact puts additional context in systemMessage, not hso."""
+        import json
+        with TestDir() as d:
+            self._make_tree(d)
+            # No glossary = stale; PreCompact does NOT suppress glossary.
+            lines, _ = self._run_hook(d,
+                                      ["--hook-event", "PreCompact"])
+            obj = json.loads(lines[0])
+            # Must NOT use hookSpecificOutput (PreCompact is unsupported)
+            self.assertNotIn("hookSpecificOutput", obj)
+            # But the glossary instructions should be in systemMessage
+            self.assertIn("GLOSSARY UPDATE NEEDED", obj["systemMessage"])
+
+    def test_unsupported_event_folds_context(self):
+        """Unknown/missing hook event folds context into systemMessage."""
+        import json
+        with TestDir() as d:
+            self._make_tree(d)
+            # No --hook-event flag at all; glossary is stale
+            lines, _ = self._run_hook(d)
+            obj = json.loads(lines[0])
+            self.assertNotIn("hookSpecificOutput", obj)
+            self.assertIn("GLOSSARY UPDATE NEEDED", obj["systemMessage"])
 
     def test_hook_no_additional_context_when_fresh(self):
         """When glossary is fresh and no warnings, no hookSpecificOutput."""
