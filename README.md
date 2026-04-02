@@ -96,7 +96,7 @@ reminders, daily checks, and recurring schedules (daily/weekly).
 
 Just tell Claude:
 
-> **"Install the alzheimer memory rebalancer from
+> **"Install the Alzheimer memory rebalancer from
 > github.com/j-p-c/alzheimer"**
 
 Claude will clone the repo, run the setup tool, and verify the hooks
@@ -113,7 +113,7 @@ models (Opus, Sonnet, Haiku).
    without disturbing existing settings, then runs a health check on
    all existing memory directories)
 3. Seed a reference memory (`reference_alzheimer.md`) into each project
-   memory directory so every Claude instance knows what "alzheimer" means
+   memory directory so every Claude instance knows what "Alzheimer" means
    and how to update, diagnose, and report bugs
 
 After that, the hooks fire automatically on every memory write, session
@@ -121,7 +121,7 @@ start, and compaction. No further configuration needed.
 
 ### Updating
 
-> **"Update alzheimer"**
+> **"Update Alzheimer"**
 
 Claude will pull the latest changes, re-install hooks, and run a health
 check across all your memory directories. If the health check finds
@@ -134,8 +134,9 @@ as complete.
 If you prefer to do it yourself:
 
 ```bash
-git clone https://github.com/j-p-c/alzheimer.git ~/alzheimer
-cd ~/alzheimer
+# Clone into your working directory (wherever you launch Claude from)
+git clone https://github.com/j-p-c/alzheimer.git
+cd alzheimer
 python3 setup.py --install
 python3 setup.py --check
 ```
@@ -152,11 +153,11 @@ These are the most common things you can ask Claude to do:
 
 - **"Check my memory health"** — Claude will run the rebalancer and
   report the current state of your memory tree.
-- **"Update alzheimer"** — Pull latest changes, re-install hooks, and
+- **"Update Alzheimer"** — Pull latest changes, re-install hooks, and
   fix any problems found.
 - **"Diagnose my memory"** — Claude will run a structured diagnostic
   and show you what (if anything) is wrong.
-- **"File an alzheimer bug report"** — Claude will collect diagnostic
+- **"File an Alzheimer bug report"** — Claude will collect diagnostic
   information (file names, line counts, error messages — never personal
   memory content) and ask whether you'd like to file it as a GitHub
   issue. Filing is always optional and requires your confirmation.
@@ -290,8 +291,8 @@ re-explained requirements and repeated mistakes — that approach falls
 short.
 
 If you use Claude Code as a long-running partner on evolving projects,
-alzheimer is built for you. If you prefer short, isolated sessions,
-alzheimer still works (it keeps your memory tree healthy regardless),
+Alzheimer is built for you. If you prefer short, isolated sessions,
+Alzheimer still works (it keeps your memory tree healthy regardless),
 but features like historical memory won't have much to work with.
 
 ## Bug reporting
@@ -303,7 +304,7 @@ If something goes wrong, tell Claude:
 Claude will run a structured diagnostic and show you what's wrong. If
 you'd like to report the issue, tell Claude:
 
-> **"File an alzheimer bug report"**
+> **"File an Alzheimer bug report"**
 
 Claude will ask for your confirmation before filing. Reports are
 privacy-safe: they include only aggregate counts and structural metrics

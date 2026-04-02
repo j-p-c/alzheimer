@@ -256,6 +256,22 @@ def check_hooks(settings_path, rebalancer_path):
         print(f"  UserPromptSubmit (reminders): MISSING")
         ok = False
 
+    # Check reference memory seed in all project memory directories.
+    alzheimer_dir = os.path.dirname(os.path.abspath(__file__))
+    memory_dirs = glob.glob(os.path.expanduser(
+        "~/.claude/projects/*/memory"
+    ))
+    for d in memory_dirs:
+        ref = os.path.join(d, "reference_alzheimer.md")
+        if not os.path.exists(ref):
+            print(f"  Reference seed: MISSING in {d}")
+            ok = False
+    if memory_dirs and all(
+        os.path.exists(os.path.join(d, "reference_alzheimer.md"))
+        for d in memory_dirs
+    ):
+        print(f"  Reference seed: OK ({len(memory_dirs)} director{'y' if len(memory_dirs) == 1 else 'ies'})")
+
     return ok
 
 
@@ -369,10 +385,9 @@ def seed_all_memory_dirs(alzheimer_dir):
     ))
     seeded = 0
     for d in memory_dirs:
-        if os.path.exists(os.path.join(d, "MEMORY.md")):
-            seed_memory(d, alzheimer_dir)
-            seeded += 1
-            print(f"  Seeded memory: {d}")
+        seed_memory(d, alzheimer_dir)
+        seeded += 1
+        print(f"  Seeded memory: {d}")
     if seeded == 0:
         print("  No memory directories found to seed.")
     return seeded
@@ -437,10 +452,19 @@ def main():
         help="Print the alzheimer install directory (from settings.json).",
     )
     parser.add_argument(
+        "--seed-one", metavar="MEMORY_DIR",
+        help="Seed reference_alzheimer.md into a single memory directory.",
+    )
+    parser.add_argument(
         "--settings", default=os.path.expanduser("~/.claude/settings.json"),
         help="Path to settings file (default: ~/.claude/settings.json).",
     )
     args = parser.parse_args()
+
+    if args.seed_one:
+        alzheimer_dir = os.path.dirname(os.path.abspath(__file__))
+        seed_memory(args.seed_one, alzheimer_dir)
+        return
 
     if args.find:
         install_dir = find_install_dir(args.settings)

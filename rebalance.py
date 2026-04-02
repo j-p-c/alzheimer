@@ -22,7 +22,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.6.3"
+VERSION = "0.6.4"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -1914,6 +1914,19 @@ def main():
         sys.exit(1)
 
     if args.hook:
+        # Self-healing: ensure reference_alzheimer.md exists.  On fresh
+        # installs the memory directory may not have existed at install
+        # time, so the seed was missed.  One stat() per hook run; only
+        # subprocesses when the file is actually missing.
+        ref_file = os.path.join(memory_dir, "reference_alzheimer.md")
+        if not os.path.exists(ref_file):
+            setup_py = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "setup.py")
+            if os.path.exists(setup_py):
+                subprocess.run(
+                    [sys.executable, setup_py, "--seed-one", memory_dir],
+                    capture_output=True)
+
         # Build a brief summary for the user's UI.
         memory_md = os.path.join(memory_dir, "MEMORY.md")
         if os.path.exists(memory_md):
