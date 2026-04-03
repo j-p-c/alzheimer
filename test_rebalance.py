@@ -1963,6 +1963,25 @@ class TestGuardrailsConfirmMode(unittest.TestCase):
             {"command": 'python /path/to/guardrails.py --exec "ls"'})
         self.assertTrue(allowed)
 
+    def test_self_allowlist_quoted_path(self):
+        """guardrails.py --exec with quoted path bypasses rules."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command":
+             'python3 "/Users/jpc/claude/alzheimer/guardrails.py"'
+             ' --exec "git push"'})
+        self.assertTrue(allowed)
+
+    def test_self_allowlist_quoted_path_with_cd(self):
+        """guardrails.py --exec with cd prefix and quoted path."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command":
+             'cd /Users/jpc/claude/alzheimer && python3'
+             ' "/Users/jpc/claude/alzheimer/guardrails.py"'
+             ' --exec "git push"'})
+        self.assertTrue(allowed)
+
     def test_self_allowlist_not_other_scripts(self):
         """Other scripts with --exec are not allowlisted."""
         allowed, msg = check_rules(

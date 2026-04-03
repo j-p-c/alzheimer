@@ -147,9 +147,11 @@ def _is_self_exec(tool_name, tool_input):
     if tool_name != "Bash":
         return False
     command = tool_input.get("command", "")
-    # Match: python3 /path/to/guardrails.py --exec "..."
+    # Match: python3 "/path/to/guardrails.py" --exec "..."
+    # The path may be quoted (Claude wraps paths in double quotes),
+    # so allow an optional closing quote after guardrails.py.
     return bool(re.search(
-        r'python3?\s+.*guardrails\.py\s+--exec\b', command
+        r'python3?\s+.*guardrails\.py["\']?\s+--exec\b', command
     ))
 
 

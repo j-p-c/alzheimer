@@ -431,6 +431,15 @@ Alzheimer is Claudeware. When working with it, think Claudewarically:
   `reminders.md` instead of CronCreate. Use `guardrails.md` for
   behavioral rules. These persist across compaction; built-in tools
   may not.
+- **Watch for recursive self-reference.** When a mechanism needs to
+  bypass itself (e.g., guardrails.py --exec temporarily removing a
+  rule to execute a confirmed command), the guard must recognize its
+  own bypass invocation. The PreToolUse hook fires on *every* Bash
+  call — including calls to guardrails.py itself. If the self-allowlist
+  regex doesn't match the exact command Claude generates (including
+  quoted paths), the bypass is blocked by the very thing it's trying
+  to bypass. Always test self-referential mechanisms with the actual
+  command format Claude produces, not idealized unquoted versions.
 """
 
     with open(memory_file, "w") as f:
