@@ -82,6 +82,50 @@ DEFAULT_RULES = [
             "Recursive delete of root (/) is blocked by Alzheimer guardrails."
         ),
     },
+    {
+        "tool": "Bash",
+        "pattern": r"gh\s+issue\s+comment\b",
+        "action": "confirm",
+        "message": (
+            "Posting a GitHub comment requires user confirmation "
+            "(Alzheimer guardrails). Draft the comment, show it to "
+            "the user, and wait for explicit permission before posting. "
+            "Public comments are permanent and visible."
+        ),
+    },
+    {
+        "tool": "Bash",
+        "pattern": r"gh\s+issue\s+create\b",
+        "action": "confirm",
+        "message": (
+            "Creating a GitHub issue requires user confirmation "
+            "(Alzheimer guardrails). Draft the issue, show it to "
+            "the user, and wait for explicit permission before filing. "
+            "Public issues are permanent and visible."
+        ),
+    },
+    {
+        "tool": "Bash",
+        "pattern": r"gh\s+pr\s+comment\b",
+        "action": "confirm",
+        "message": (
+            "Posting a GitHub PR comment requires user confirmation "
+            "(Alzheimer guardrails). Draft the comment, show it to "
+            "the user, and wait for explicit permission before posting. "
+            "Public comments are permanent and visible."
+        ),
+    },
+    {
+        "tool": "Bash",
+        "pattern": r"gh\s+pr\s+create\b",
+        "action": "confirm",
+        "message": (
+            "Creating a GitHub PR requires user confirmation "
+            "(Alzheimer guardrails). Draft the PR, show it to "
+            "the user, and wait for explicit permission before creating. "
+            "Public PRs are permanent and visible."
+        ),
+    },
 ]
 
 # Config file for custom rules (loaded from alzheimer install dir).

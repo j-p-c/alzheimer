@@ -1994,6 +1994,52 @@ class TestGuardrailsConfirmMode(unittest.TestCase):
         self.assertFalse(_is_self_exec(
             "Write", {"command": "guardrails.py --exec"}))
 
+    def test_gh_issue_comment_blocked(self):
+        """gh issue comment requires confirmation."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'gh issue comment 42772 --repo anthropics/claude-code --body "test"'})
+        self.assertFalse(allowed)
+        self.assertIn("user confirmation", msg)
+
+    def test_gh_issue_create_blocked(self):
+        """gh issue create requires confirmation."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'gh issue create --repo anthropics/claude-code --title "test"'})
+        self.assertFalse(allowed)
+        self.assertIn("user confirmation", msg)
+
+    def test_gh_pr_comment_blocked(self):
+        """gh pr comment requires confirmation."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'gh pr comment 123 --repo anthropics/claude-code --body "test"'})
+        self.assertFalse(allowed)
+        self.assertIn("user confirmation", msg)
+
+    def test_gh_pr_create_blocked(self):
+        """gh pr create requires confirmation."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'gh pr create --title "test" --body "test"'})
+        self.assertFalse(allowed)
+        self.assertIn("user confirmation", msg)
+
+    def test_gh_issue_view_allowed(self):
+        """gh issue view (read-only) is not blocked."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'gh issue view 42772 --repo anthropics/claude-code'})
+        self.assertTrue(allowed)
+
+    def test_gh_search_allowed(self):
+        """gh search (read-only) is not blocked."""
+        allowed, msg = check_rules(
+            "Bash",
+            {"command": 'gh search issues "test" --repo anthropics/claude-code'})
+        self.assertTrue(allowed)
+
 
 class TestGuardrailsConfigManipulation(unittest.TestCase):
     """Tests for .guardrails.conf add/remove operations."""
