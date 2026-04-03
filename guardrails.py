@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """
-guardrails.py — PreToolUse hook that blocks dangerous operations.
+guardrails.py — Fixes permission drift in Claude Code.
 
-Hard layer of the Alzheimer guardrails system. Pattern-matches tool
-invocations against a configurable set of rules and blocks those that
-match by exiting non-zero.
+Hard layer of the Alzheimer guardrails system. When Claude stops asking
+before taking risky actions (the "yes, yes, yes" drift pattern), this
+hook catches what Claude forgot. Pattern-matches tool invocations against
+configurable rules and blocks those that match by exiting non-zero.
 
 The hook receives tool information as JSON on stdin:
     {"tool_name": "Bash", "tool_input": {"command": "git push origin main"}}
 
-Exit 0 to allow, exit 1 with a JSON message to block.
+Exit 0 to allow, exit 2 with a JSON error message to block.
 
-Also supports --exec mode for "confirm" rules: temporarily removes
-the matching rule, runs the command, and re-adds the rule in a
-try/finally block — guaranteeing rule restoration.
+Three action types:
+  - "allow": no rule matched — tool call proceeds
+  - "block": always rejected — user must edit config to remove
+  - "confirm": blocked on first attempt; approved execution via --exec
+    mode, which temporarily removes the rule, runs the command, and
+    re-adds the rule in a try/finally block — guaranteeing restoration
+
+The safety-critical step (restoring the guardrail after execution) is
+deterministic Python code, not a behavioral promise subject to drift.
 """
 
 import json

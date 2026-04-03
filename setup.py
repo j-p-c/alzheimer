@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-setup.py — Install and manage alzheimer hooks in Claude Code settings.
+setup.py — Installer and updater for Alzheimer.
+
+Manages the hook registrations in Claude Code's settings that make
+Alzheimer's fixes automatic: memory rebalancing, guardrails, reminders,
+glossary updates, and drift detection. Also seeds reference memories so
+every Claude instance knows what Alzheimer is — even after compaction.
 
 Usage:
     python3 setup.py              # Preview hook configuration

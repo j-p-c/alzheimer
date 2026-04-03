@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-rebalance.py — Self-balancing hierarchical memory tree for Claude Code.
+rebalance.py — Core engine for Alzheimer, fixing Claude Code's memory bugs.
 
-Maintains a tree of index files rooted at MEMORY.md, ensuring no index
-exceeds a configured line limit. When an index grows too large, entries
-are grouped by memory type and pushed into child index files.
+Prevents silent memory loss by maintaining a self-balancing tree of index
+files rooted at MEMORY.md. Also manages the glossary (fixing term amnesia
+after compaction), guardrails soft layer (fixing permission drift), drift
+detection (fixing silent accumulation of orphans and oversized files), and
+update staleness checks (fixing silent failures).
 
 Usage:
     python3 rebalance.py /path/to/memory/directory [--max-lines N] [--dry-run]
 
-The script is designed to be called from Claude Code hooks (PostToolUse,
-SessionStart, PreCompact) but can also be run manually.
+Called automatically by Claude Code hooks (PostToolUse, SessionStart,
+PreCompact) but can also be run manually for diagnostics and verification.
 """
 
 import argparse
@@ -22,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.3"
+VERSION = "0.7.4"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -1996,11 +1998,10 @@ def main():
                 "distinguish housekeeping from the conversation."
             )
             additional_text = "\n\n".join(additional)
-            # hookSpecificOutput with additionalContext is only valid
-            # for PostToolUse and UserPromptSubmit events.  For other
-            # events (SessionStart, PreCompact), fold into systemMessage
-            # so the instructions reach Claude instead of being silently
-            # dropped by hook output validation.
+            # Route additional context through hookSpecificOutput for all
+            # supported events.  SessionStart and PreCompact DO support
+            # additionalContext (confirmed via CC binary analysis, v2.1.90).
+            # Unknown/missing events fall back to systemMessage.
             hso_supported = ("PostToolUse", "UserPromptSubmit",
                                 "SessionStart", "PreCompact")
             if args.hook_event and args.hook_event in hso_supported:

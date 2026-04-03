@@ -1,17 +1,25 @@
-# Alzheimer: self-balancing hierarchical memory for Claude Code
+# Alzheimer: fixing Claude Code's memory bugs — Design Document
 
-## Problem
+Alzheimer is a suite of fixes for Claude Code's memory and behavioral
+problems. This document describes the design of each subsystem in detail.
 
-Claude Code's memory system uses a flat index file (MEMORY.md) capped at
+For an overview of what's broken and how Alzheimer fixes it, see
+[README.md](README.md).
+
+## Bug 1: Silent memory loss
+
+### Problem
+
+Claude Code's memory system uses a flat index file (`MEMORY.md`) capped at
 200 lines / 25KB. When it overflows, entries at the bottom are silently
 lost. Topic files exist but are only loaded on demand — if their pointer
-in MEMORY.md is truncated, they become orphaned and effectively forgotten.
+in `MEMORY.md` is truncated, they become orphaned and effectively forgotten.
 
-Auto Dream (Anthropic's consolidation agent) prunes MEMORY.md to stay
+Auto Dream (Anthropic's consolidation agent) prunes `MEMORY.md` to stay
 under the limit, but it maintains a flat structure. It does not create
 hierarchy or push detail down into sub-indices.
 
-## Solution
+### Solution: self-balancing memory tree
 
 Transform the flat index into a self-balancing tree:
 
@@ -33,12 +41,12 @@ MEMORY.md                          (root index, ≤150 lines)
 
 ### Design principles
 
-1. **Root stays small.** MEMORY.md must NEVER exceed 150 lines (headroom
+1. **Root stays small.** `MEMORY.md` must NEVER exceed 150 lines (headroom
    below the 200-line hard cap). When it would exceed this, entries are
    grouped into category indices and replaced with a single pointer.
 
 2. **Detail pushes down.** Each category index follows the same format
-   and same size limit as MEMORY.md. If a category grows too large, it
+   and same size limit as `MEMORY.md`. If a category grows too large, it
    spawns sub-categories. The tree grows in depth, not width.
 
 3. **Summaries push up.** Each category index's pointer in its parent
@@ -52,30 +60,30 @@ MEMORY.md                          (root index, ≤150 lines)
 5. **Recursive discipline.** The same size limit applies at every level.
    No file in the tree may exceed the configured line limit.
 
-6. **Compatible with Auto Dream.** Leaf entries in MEMORY.md still use
+6. **Compatible with Auto Dream.** Leaf entries in `MEMORY.md` still use
    the standard one-line format. Category pointers are also one-line.
    Auto Dream can still prune/consolidate without breaking the tree.
 
-7. **Graceful discovery.** If MEMORY.md is ever truncated despite our
+7. **Graceful discovery.** If `MEMORY.md` is ever truncated despite our
    efforts, the `_index/` directory structure allows rediscovery by
    scanning the filesystem.
 
-## Tree conventions
+### Tree conventions
 
-### Index files vs leaf files
+#### Index files vs leaf files
 
 - **Index files** live in `_index/` subdirectory and contain only
   pointers to other files (no detailed content).
 - **Leaf files** live in the memory root directory (current behavior).
 - `MEMORY.md` is the root index.
 
-### Entry format (same at every level)
+#### Entry format (same at every level)
 
 ```markdown
 - [Title](relative/path.md) — one-line description under 150 chars
 ```
 
-### Category pointer format in MEMORY.md
+#### Category pointer format in `MEMORY.md`
 
 ```markdown
 - [Projects (5)](_index/projects.md) — alzheimer, API gateway, auth service, billing integration, search service
@@ -84,7 +92,7 @@ MEMORY.md                          (root index, ≤150 lines)
 The count in parentheses tells Claude how many entries are inside without
 needing to read the file. The description summarizes the contents.
 
-### Frontmatter for index files
+#### Frontmatter for index files
 
 ```markdown
 ---
@@ -95,7 +103,7 @@ max_lines: 150
 ---
 ```
 
-## Rebalancing algorithm
+### Rebalancing algorithm
 
 ```
 rebalance(index_file, max_lines=150):
@@ -116,7 +124,7 @@ rebalance(index_file, max_lines=150):
         rebalance(child, max_lines)
 ```
 
-### Grouping strategy
+#### Grouping strategy
 
 Level 1: Group by memory type (user, feedback, project, reference).
 Level 2+: Group by topic prefix or semantic similarity.
@@ -124,7 +132,7 @@ Level 2+: Group by topic prefix or semantic similarity.
 Minimum group size: 3 entries. Smaller groups stay as leaf entries in
 the parent index. This prevents over-fragmentation.
 
-### When rebalancing runs
+#### When rebalancing runs
 
 1. **After every memory write.** A PostToolUse hook on Write|Edit
    detects writes to the memory directory and triggers the rebalancer.
@@ -133,7 +141,7 @@ the parent index. This prevents over-fragmentation.
 3. **Before compaction.** The existing PreCompact hook already saves
    unsaved context; we add a rebalance step.
 
-## Trigger mechanism
+### Trigger mechanism
 
 The rebalancer is a Python script (`rebalance.py`) invoked by hooks:
 
@@ -156,147 +164,7 @@ correct absolute path for your machine. The `--hook-event` flag tells
 the rebalancer which hook triggered it, enabling event-specific behavior
 (e.g., suppressing glossary updates on SessionStart).
 
-## Size budget
-
-With 150-line indices and 3-entry minimum groups:
-
-| Tree depth | Max leaf entries |
-|------------|-----------------|
-| 1          | 150             |
-| 2          | ~7,500          |
-| 3          | ~375,000        |
-
-Depth 2 should suffice for any realistic Claude Code project.
-
-## Key terms glossary
-
-Important terms (proper nouns, project names, people) get lost after
-Claude Code conversation compaction because the rebalancer treats all
-memory entries equally. The glossary fixes this by maintaining a pinned
-summary of key terms at the top of MEMORY.md.
-
-### How it works
-
-A `glossary.md` file uses `type: glossary` in its frontmatter — a type
-that is NOT in the rebalancer's `CATEGORY_LABELS`, so it is never pushed
-into `_index/`. It stays pinned in the root MEMORY.md.
-
-```markdown
----
-type: glossary
-updated: 2026-03-29
-terms: 15
----
-
-# Key terms
-
-- **Project Alpha** — the main deployment target for billing services
-- **Server Omega** — CI/CD build server in the staging environment
-```
-
-The MEMORY.md entry lists the terms inline for visibility even without
-opening the file:
-
-```markdown
-- [Key Terms](glossary.md) — Project Alpha, Server Omega, Team Delta, ...
-```
-
-### Generation
-
-The glossary is **written by Claude, not by Python code**. When the
-rebalancer detects that `glossary.md` is stale (missing, or older than
-any memory file), it emits a `systemMessage` instructing Claude to:
-
-1. Read all memory files in the directory
-2. Identify the 10-20 most important key terms
-3. Write `glossary.md` with proper frontmatter and one-line definitions
-
-This avoids the limitations of regex-based term extraction (noisy
-results, wrong definitions, inability to understand context).
-
-### Staleness detection
-
-`glossary_is_stale()` compares the `mtime` of `glossary.md` against all
-memory files. If any memory file is newer, the glossary is stale.
-
-### Integration with rebalance()
-
-Glossary processing runs BEFORE the `needs_rebalance` check. This means:
-- The glossary is checked every run, not just when limits are exceeded
-- Adding the glossary entry may push MEMORY.md over limits, correctly
-  triggering a rebalance
-- `GLOSSARY_MIN_TERMS = 3` — glossary is skipped for trivial trees
-- **Glossary update messages are suppressed on SessionStart.** On machines
-  with many project directories, emitting glossary instructions for every
-  stale project at startup floods Claude with competing instructions that
-  are unlikely to be acted on. Instead, glossary update instructions are
-  only emitted on PostToolUse (after memory writes), when Claude is already
-  acting on a specific project and there is only one instruction to follow.
-
-### Inline content detection
-
-MEMORY.md files that contain inline content (notes, commands, multi-line
-blocks mixed between standard index entries) cannot be safely rebalanced.
-The parser only recognizes `- [Title](file.md) — desc` entries; any other
-non-blank lines after the header would be silently dropped by `write_index`.
-
-When `count_inline_content()` finds such lines, the rebalancer:
-1. Skips rebalancing entirely to avoid data loss
-2. Leaves the file completely untouched
-3. If the file is **over the limit**: emits an urgent warning instructing
-   Claude to restructure the MEMORY.md into standard index format
-4. If the file is **under the limit**: logs an informational note (no
-   warning) — small amounts of inline content in a healthy file are not
-   a data loss risk
-
-A post-rebalance verification also checks whether the file is still over
-limits after a successful rebalance (e.g., due to an oversized header).
-If so, it warns with restructuring instructions.
-
-## Early rebalancing
-
-Young trees (no `_index/` directory yet) are at higher risk of
-overflowing before the first rebalance. When `is_young_tree()` detects
-there is no `_index/` directory, the rebalancer triggers at 50% of the
-normal threshold. This prevents a burst of new memories from pushing
-MEMORY.md past the limit.
-
-## Drift detection
-
-Problems that the rebalancer can't fix itself used to accumulate silently
-between `--verify` runs. Now `check_drift()` runs on every invocation
-(including no-op runs where MEMORY.md is within limits).
-
-**Orphan auto-indexing:** When `check_drift()` finds memory files not
-referenced by any index, it reads their frontmatter (`name` and
-`description` fields) and automatically adds index entries to MEMORY.md.
-This means Claude only needs to write the memory file — the rebalancer
-handles the indexing. Orphans without valid frontmatter are reported as
-warnings for Claude to handle manually.
-
-**Oversized leaf detection:** Leaf files over 150 lines are reported as
-warnings via `additionalContext` so Claude can trim or split them.
-
-`check_drift()` is intentionally lightweight: one directory listing plus
-entry comparison. It excludes `glossary.md` (managed by the rebalancer)
-and files in `_index/` (already checked by `rebalance_index()`).
-
-## Update staleness check
-
-On SessionStart and PreCompact hooks, the rebalancer checks whether the
-local Alzheimer repo is behind `origin/main`. If updates are available,
-it appends `(update available)` to the user-visible status line and
-sends instructions to Claude via `additionalContext`.
-
-The check does a `git fetch` and `git rev-list HEAD..origin/main --count`,
-but caches the result in `.alzheimer.lastcheck` (gitignored). The cache
-expires after 24 hours, so network overhead is at most one fetch per day.
-If the fetch fails (offline, no remote), the check is silently skipped.
-
-The check runs on PreCompact (not just SessionStart) because long-lived
-sessions may run for days without restarting.
-
-## Hook mode (`--hook`)
+### Hook mode (`--hook`)
 
 When invoked with `--hook`, the rebalancer produces a single JSON object
 on stdout. The optional `--hook-event` flag specifies which Claude Code
@@ -328,33 +196,144 @@ This is how the rebalancer communicates:
 
 Without `--hook`, output is plain text suitable for manual use.
 
-## Reference memory seeding
+### Size budget
 
-On install or update, `setup.py` writes a `reference_alzheimer.md` file
-into each project memory directory (`~/.claude/projects/*/memory/`).
-This ensures every Claude instance knows:
-- What "alzheimer" is
-- How to update it (`setup.py --update`)
-- How to diagnose issues (`rebalance.py --diagnose`)
-- How to report bugs (`rebalance.py --report`)
+With 150-line indices and 3-entry minimum groups:
 
-The seeded file uses `type: reference` frontmatter and includes the
-install path and version, so Claude can run commands without guessing
-paths.
+| Tree depth | Max leaf entries |
+|------------|-----------------|
+| 1          | 150             |
+| 2          | ~7,500          |
+| 3          | ~375,000        |
 
-## Compatibility
+Depth 2 should suffice for any realistic Claude Code project.
+
+### Early rebalancing
+
+Young trees (no `_index/` directory yet) are at higher risk of
+overflowing before the first rebalance. When `is_young_tree()` detects
+there is no `_index/` directory, the rebalancer triggers at 50% of the
+normal threshold. This prevents a burst of new memories from pushing
+`MEMORY.md` past the limit.
+
+### Compatibility
 
 - **Auto Dream**: Leaf entries use standard format. Auto Dream can still
   consolidate leaves. Category pointers look like normal entries.
   Auto Dream may try to flatten categories back — we detect and re-tree
   on the next rebalance pass.
 - **Existing memories**: Migration is non-destructive. Leaf files don't
-  move. Only MEMORY.md changes (entries replaced with category pointers).
+  move. Only `MEMORY.md` changes (entries replaced with category pointers).
 - **Other Claude instances**: The tree structure degrades gracefully to
   the standard flat system. An instance that doesn't understand
   categories will see them as normal entries pointing to readable files.
 
-## Guardrails
+## Bug 2: Silent drift — Drift detection
+
+Problems that the rebalancer can't fix itself used to accumulate silently
+between `--verify` runs. Now `check_drift()` runs on every invocation
+(including no-op runs where `MEMORY.md` is within limits).
+
+**Orphan auto-indexing:** When `check_drift()` finds memory files not
+referenced by any index, it reads their frontmatter (`name` and
+`description` fields) and automatically adds index entries to `MEMORY.md`.
+This means Claude only needs to write the memory file — the rebalancer
+handles the indexing. Orphans without valid frontmatter are reported as
+warnings for Claude to handle manually.
+
+**Oversized leaf detection:** Leaf files over 150 lines are reported as
+warnings via `additionalContext` so Claude can trim or split them.
+
+`check_drift()` is intentionally lightweight: one directory listing plus
+entry comparison. It excludes `glossary.md` (managed by the rebalancer)
+and files in `_index/` (already checked by `rebalance_index()`).
+
+## Bug 3: Term amnesia — Key terms glossary
+
+Important terms (proper nouns, project names, people) get lost after
+Claude Code conversation compaction because the rebalancer treats all
+memory entries equally. The glossary fixes this by maintaining a pinned
+summary of key terms at the top of `MEMORY.md`.
+
+### How it works
+
+A `glossary.md` file uses `type: glossary` in its frontmatter — a type
+that is NOT in the rebalancer's `CATEGORY_LABELS`, so it is never pushed
+into `_index/`. It stays pinned in the root `MEMORY.md`.
+
+```markdown
+---
+type: glossary
+updated: 2026-03-29
+terms: 15
+---
+
+# Key terms
+
+- **Project Alpha** — the main deployment target for billing services
+- **Server Omega** — CI/CD build server in the staging environment
+```
+
+The `MEMORY.md` entry lists the terms inline for visibility even without
+opening the file:
+
+```markdown
+- [Key Terms](glossary.md) — Project Alpha, Server Omega, Team Delta, ...
+```
+
+### Generation
+
+The glossary is **written by Claude, not by Python code**. When the
+rebalancer detects that `glossary.md` is stale (missing, or older than
+any memory file), it emits a `systemMessage` instructing Claude to:
+
+1. Read all memory files in the directory
+2. Identify the 10-20 most important key terms
+3. Write `glossary.md` with proper frontmatter and one-line definitions
+
+This avoids the limitations of regex-based term extraction (noisy
+results, wrong definitions, inability to understand context).
+
+### Staleness detection
+
+`glossary_is_stale()` compares the `mtime` of `glossary.md` against all
+memory files. If any memory file is newer, the glossary is stale.
+
+### Integration with rebalance()
+
+Glossary processing runs BEFORE the `needs_rebalance` check. This means:
+- The glossary is checked every run, not just when limits are exceeded
+- Adding the glossary entry may push `MEMORY.md` over limits, correctly
+  triggering a rebalance
+- `GLOSSARY_MIN_TERMS = 3` — glossary is skipped for trivial trees
+- **Glossary update messages are suppressed on SessionStart.** On machines
+  with many project directories, emitting glossary instructions for every
+  stale project at startup floods Claude with competing instructions that
+  are unlikely to be acted on. Instead, glossary update instructions are
+  only emitted on PostToolUse (after memory writes), when Claude is already
+  acting on a specific project and there is only one instruction to follow.
+
+### Inline content detection
+
+`MEMORY.md` files that contain inline content (notes, commands, multi-line
+blocks mixed between standard index entries) cannot be safely rebalanced.
+The parser only recognizes `- [Title](file.md) — desc` entries; any other
+non-blank lines after the header would be silently dropped by `write_index`.
+
+When `count_inline_content()` finds such lines, the rebalancer:
+1. Skips rebalancing entirely to avoid data loss
+2. Leaves the file completely untouched
+3. If the file is **over the limit**: emits an urgent warning instructing
+   Claude to restructure the `MEMORY.md` into standard index format
+4. If the file is **under the limit**: logs an informational note (no
+   warning) — small amounts of inline content in a healthy file are not
+   a data loss risk
+
+A post-rebalance verification also checks whether the file is still over
+limits after a successful rebalance (e.g., due to an oversized header).
+If so, it warns with restructuring instructions.
+
+## Bug 4: Permission drift — Guardrails
 
 ### Problem
 
@@ -451,24 +430,36 @@ The guardrails hook (`guardrails.py`) pattern-matches against a
 configurable set of rules:
 
 ```python
-HARD_RULES = [
+DEFAULT_RULES = [
     {
         "tool": "Bash",
         "pattern": r"git\s+push\b",
-        "action": "block",
-        "message": "git push blocked by guardrails — ask the user first"
+        "action": "confirm",
+        "message": "git push requires user confirmation"
     },
     {
         "tool": "Bash",
         "pattern": r"git\s+push\s+.*--force\b",
-        "action": "block",
-        "message": "force-push blocked by guardrails"
+        "action": "confirm",
+        "message": "git push --force requires user confirmation"
     },
     {
         "tool": "Bash",
-        "pattern": r"rm\s+-rf\s+/",
+        "pattern": r"git\s+reset\s+--hard\b",
+        "action": "confirm",
+        "message": "git reset --hard requires user confirmation"
+    },
+    {
+        "tool": "Bash",
+        "pattern": r"git\s+branch\s+-[dD]\b",
+        "action": "confirm",
+        "message": "Branch deletion requires user confirmation"
+    },
+    {
+        "tool": "Bash",
+        "pattern": r"rm\s+-r[f ]\s*/\s*$|rm\s+-r[f ]\s*/\s+",
         "action": "block",
-        "message": "recursive delete of root blocked by guardrails"
+        "message": "Recursive delete of root blocked by guardrails"
     },
 ]
 ```
@@ -492,10 +483,12 @@ hooks:
 }
 ```
 
-The hook reads tool input from stdin, checks it against `HARD_RULES`,
-and either exits 0 (allow) or exits 1 with a JSON error message
-(block). Blocked actions surface in Claude's context as hook failures,
-prompting Claude to ask the user for explicit confirmation.
+The hook reads tool input from stdin, checks it against `DEFAULT_RULES`,
+and either exits 0 (allow) or exits 2 with a JSON error message
+(block). Exit code 2 blocks the tool call and shows the error to the
+model; exit code 1 would only show it to the user. Blocked actions
+surface in Claude's context as hook failures, prompting Claude to ask
+the user for explicit confirmation.
 
 #### Configurable rules
 
@@ -651,7 +644,129 @@ reducing the frequency of guardrail activations over time.
   without asking), others are project-specific (this repo is public,
   no secrets). How to handle the distinction.
 
-## Historical memory (in development)
+## Bug 5: Time-blindness — Reminders
+
+### Problem
+
+Claude Code has no built-in mechanism for time-triggered actions.
+Users can say "remind me to check X next week," but this relies on
+Claude remembering — which fails across compaction, session restarts,
+and context loss. The current workaround (a `reminders.md` file that
+Claude reads and checks manually) is attention-based: it only works if
+Claude happens to read the file at the right time.
+
+Worse, `SessionStart` hooks are unreliable for recurring checks in
+long-lived sessions. Users who run multi-day conversations (the usage
+pattern Alzheimer optimizes for) may go weeks without starting a new
+session.
+
+### Solution: prompt-level time checking
+
+Reminders uses a two-tier hook architecture attached to
+`UserPromptSubmit` — the one event that fires reliably in long-lived
+sessions:
+
+1. **Tier 1 (every prompt, ~1ms):** A lightweight time check compares
+   the current wall clock against a single timestamp file
+   (`~/.alzheimer-last-check`). If less than N minutes have elapsed
+   since the last check, exit immediately. Cost: one `stat()` call
+   and one integer comparison.
+
+2. **Tier 2 (every N minutes):** Read the pinned `reminders.md` file,
+   compare each reminder's date/time against `now()`. If any reminders
+   are due, inject them into Claude's context via `additionalContext`.
+   Update the timestamp file.
+
+The tier 1 gate keeps per-prompt overhead negligible. The tier 2 check
+runs at a configurable interval (default: 60 minutes for date-level
+reminders, potentially shorter for time-level reminders).
+
+### Reminder format
+
+```markdown
+---
+type: reminders
+---
+
+# Reminders
+
+## Date reminders (checked hourly)
+
+- 2026-04-12 — Check if anthropics/claude-code#40614 got traction
+- 2026-05-01 — Review Alzheimer quarterly: prune stale memories
+
+## Recurring (checked hourly)
+
+- daily 09:00 — Pull memory-issue-watch report
+- weekly Mon — Review open GitHub issues
+```
+
+### Lifecycle
+
+1. User says "remind me to do X on Thursday"
+2. Claude converts to absolute date (`2026-04-03`) and adds to
+   `reminders.md`
+3. On the next tier 2 check after that date, the reminder is injected
+   into context
+4. Claude acts on it (or tells the user) and removes the line
+
+### Integration with existing hooks
+
+The tier 1 time check can be added to the existing `UserPromptSubmit`
+hook chain. Since hooks in the same event run sequentially, the
+timestamp check runs first and short-circuits before any expensive
+operations if the interval hasn't elapsed.
+
+The `reminders.md` file uses `type: reminders` frontmatter and is
+pinned in `MEMORY.md` (never moved to `_index/`), following the same
+pattern as glossary and guardrails.
+
+### Open questions (reminders)
+
+- **Granularity.** Date-level reminders (checked hourly) are
+  straightforward. Time-level reminders ("at 3pm") need shorter
+  check intervals, which increases per-prompt overhead. Is minute-level
+  checking worth the cost?
+- **Recurring reminders.** Daily/weekly patterns need a "last fired"
+  timestamp to avoid re-firing every check within the same day.
+  Store alongside the reminder or in a separate state file?
+- **Timezone handling.** Reminders should be in the user's local
+  timezone. The hook needs to know the timezone (from environment
+  or config) to compare correctly.
+- **Missed reminders.** If a reminder's date passes without any
+  session running, it should fire on the next check, not silently
+  expire. How far back to look?
+
+## Bug 6: Silent failures — Update staleness check and self-healing
+
+On SessionStart and PreCompact hooks, the rebalancer checks whether the
+local Alzheimer repo is behind `origin/main`. If updates are available,
+it appends `(update available)` to the user-visible status line and
+sends instructions to Claude via `additionalContext`.
+
+The check does a `git fetch` and `git rev-list HEAD..origin/main --count`,
+but caches the result in `.alzheimer.lastcheck` (gitignored). The cache
+expires after 24 hours, so network overhead is at most one fetch per day.
+If the fetch fails (offline, no remote), the check is silently skipped.
+
+The check runs on PreCompact (not just SessionStart) because long-lived
+sessions may run for days without restarting.
+
+### Reference memory seeding
+
+On install or update, `setup.py` writes a `reference_alzheimer.md` file
+into each project memory directory (`~/.claude/projects/*/memory/`).
+This ensures every Claude instance knows:
+- What "alzheimer" is
+- How to update it (`setup.py --update`)
+- How to diagnose issues (`rebalance.py --diagnose`)
+- How to report bugs (`rebalance.py --report`)
+
+The seeded file uses `type: reference` frontmatter and includes the
+install path and version, so Claude can run commands without guessing
+paths.
+
+## Bug 7: Compaction cliff — Historical memory (in development)
 
 ### Problem
 
@@ -875,7 +990,7 @@ work but don't warrant a permanent memory entry.
   from running as background agents to avoid displacing the user's active
   work.
 
-## Post-mortem (in development)
+## Bug 8: Accountability gaps — Post-mortem (in development)
 
 ### Problem
 
@@ -962,108 +1077,16 @@ modify any files. However, its findings may lead to new guardrails
   context. Historical memory summaries help narrow the search, but
   the drill-down step needs careful budgeting.
 
-## Reminders
-
-### Problem
-
-Claude Code has no built-in mechanism for time-triggered actions.
-Users can say "remind me to check X next week," but this relies on
-Claude remembering — which fails across compaction, session restarts,
-and context loss. The current workaround (a `reminders.md` file that
-Claude reads and checks manually) is attention-based: it only works if
-Claude happens to read the file at the right time.
-
-Worse, `SessionStart` hooks are unreliable for recurring checks in
-long-lived sessions. Users who run multi-day conversations (the usage
-pattern Alzheimer optimizes for) may go weeks without starting a new
-session.
-
-### Solution: prompt-level time checking
-
-Reminders uses a two-tier hook architecture attached to
-`UserPromptSubmit` — the one event that fires reliably in long-lived
-sessions:
-
-1. **Tier 1 (every prompt, ~1ms):** A lightweight time check compares
-   the current wall clock against a single timestamp file
-   (`~/.alzheimer-last-check`). If less than N minutes have elapsed
-   since the last check, exit immediately. Cost: one `stat()` call
-   and one integer comparison.
-
-2. **Tier 2 (every N minutes):** Read the pinned `reminders.md` file,
-   compare each reminder's date/time against `now()`. If any reminders
-   are due, inject them into Claude's context via `additionalContext`.
-   Update the timestamp file.
-
-The tier 1 gate keeps per-prompt overhead negligible. The tier 2 check
-runs at a configurable interval (default: 60 minutes for date-level
-reminders, potentially shorter for time-level reminders).
-
-### Reminder format
-
-```markdown
----
-type: reminders
----
-
-# Reminders
-
-## Date reminders (checked hourly)
-
-- 2026-04-12 — Check if anthropics/claude-code#40614 got traction
-- 2026-05-01 — Review Alzheimer quarterly: prune stale memories
-
-## Recurring (checked hourly)
-
-- daily 09:00 — Pull memory-issue-watch report
-- weekly Mon — Review open GitHub issues
-```
-
-### Lifecycle
-
-1. User says "remind me to do X on Thursday"
-2. Claude converts to absolute date (`2026-04-03`) and adds to
-   `reminders.md`
-3. On the next tier 2 check after that date, the reminder is injected
-   into context
-4. Claude acts on it (or tells the user) and removes the line
-
-### Integration with existing hooks
-
-The tier 1 time check can be added to the existing `UserPromptSubmit`
-hook chain. Since hooks in the same event run sequentially, the
-timestamp check runs first and short-circuits before any expensive
-operations if the interval hasn't elapsed.
-
-The `reminders.md` file uses `type: reminders` frontmatter and is
-pinned in `MEMORY.md` (never moved to `_index/`), following the same
-pattern as glossary and guardrails.
-
-### Open questions (reminders)
-
-- **Granularity.** Date-level reminders (checked hourly) are
-  straightforward. Time-level reminders ("at 3pm") need shorter
-  check intervals, which increases per-prompt overhead. Is minute-level
-  checking worth the cost?
-- **Recurring reminders.** Daily/weekly patterns need a "last fired"
-  timestamp to avoid re-firing every check within the same day.
-  Store alongside the reminder or in a separate state file?
-- **Timezone handling.** Reminders should be in the user's local
-  timezone. The hook needs to know the timezone (from environment
-  or config) to compare correctly.
-- **Missed reminders.** If a reminder's date passes without any
-  session running, it should fire on the next check, not silently
-  expire. How far back to look?
-
 ## File layout
 
 ```
 alzheimer/
-├── DESIGN.md          (this file)
-├── README.md          (usage instructions)
+├── DESIGN.md          (this file — detailed design of each subsystem)
+├── README.md          (what's broken and how Alzheimer fixes it)
+├── rebalance.py       (core engine: tree, glossary, guardrails soft layer, drift)
 ├── guardrails.py      (PreToolUse hook: hard layer, confirm mode, --exec)
-├── rebalance.py       (core rebalancer script, soft layer integration)
 ├── reminders.py       (UserPromptSubmit hook: two-tier time-triggered checks)
 ├── setup.py           (installer, updater, reference memory seeder)
-└── test_rebalance.py  (tests)
+├── test_rebalance.py  (178 tests)
+└── reports/           (automated tracking, e.g. memory-issue-watch)
 ```

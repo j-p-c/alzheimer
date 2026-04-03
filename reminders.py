@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """
-reminders.py — UserPromptSubmit hook that checks for due reminders.
+reminders.py — Fixes time-blindness in Claude Code.
+
+Claude has no built-in mechanism for time-triggered actions. "Remind me
+next week" only works if Claude happens to read the right file at the
+right time — which it usually doesn't, especially across compaction and
+session restarts. This hook makes reminders mechanical.
 
 Two-tier architecture:
-  Tier 1: Lightweight timestamp check (~1ms). If less than CHECK_INTERVAL
-          minutes have elapsed since last check, exit immediately.
-  Tier 2: Parse all reminders.md files, find due reminders, output them
-          as additionalContext via JSON systemMessage on stdout.
+  Tier 1: Lightweight timestamp check (~1ms per prompt). If less than
+          CHECK_INTERVAL minutes have elapsed since last check, exit
+          immediately. Cost: one stat() call.
+  Tier 2: Parse all reminders.md files, find due reminders, inject them
+          into Claude's context via hookSpecificOutput.additionalContext.
+
+Supports one-shot date reminders, daily checks, and recurring schedules
+(daily/weekly). Escalation pressure increases urgency if reminders fire
+repeatedly without being acted on.
 
 The hook receives prompt info on stdin (ignored — we only care about time).
 Exit 0 always (this is advisory, never blocks).
