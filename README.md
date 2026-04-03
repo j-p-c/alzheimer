@@ -246,7 +246,7 @@ want to check on things or troubleshoot, here's how.
 - **"Diagnose my memory"** — Run a structured diagnostic and show
   what (if anything) is wrong.
 - **"File an Alzheimer bug report"** — Collect diagnostic information
-  (file names, line counts, error messages — never personal memory
+  (anonymized file names, line counts, error messages — never personal memory
   content) and offer to file it as a GitHub issue.
 
 ### What you'll see
