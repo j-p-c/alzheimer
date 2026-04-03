@@ -251,13 +251,26 @@ want to check on things or troubleshoot, here's how.
 
 ### What you'll see
 
-On every session start, you'll see a brief status line:
+**Terminal / CLI:** On every session start, you'll see a brief status line:
 
 ```
 alzheimer: 27/150 lines, 3/20 KB — balanced
 ```
 
-This confirms the rebalancer is running and your memory tree is healthy.
+This confirms Alzheimer is running and your memory tree is healthy.
+
+**VS Code extension:** The status line is not currently visible. This is
+a known limitation of the VS Code extension — it does not render
+`systemMessage` output from hooks (see
+[#15344](https://github.com/anthropics/claude-code/issues/15344)).
+Alzheimer is still running and Claude still receives all instructions;
+only the user-facing status line is missing. You can verify Alzheimer
+is active by running `rebalance.py --hook` manually.
+
+In both environments, Claude may produce brief labeled output like
+`[Alzheimer: Updated glossary]` when performing background
+housekeeping. This is normal and can be skimmed past.
+
 If there's a problem, Claude will tell you about it and offer to fix it.
 
 ### Command-line reference
@@ -396,7 +409,7 @@ Here's an example of what a filed report looks like:
 ```markdown
 ## Anomaly Report
 
-**Rebalancer version:** 0.7.4
+**Rebalancer version:** 0.7.5
 **Python:** 3.14.3
 **Platform:** Darwin 25.4.0
 
