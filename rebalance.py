@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.8"
+VERSION = "0.7.9"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -908,8 +908,14 @@ def collect_memory_files(memory_dir):
     return files
 
 
-def glossary_is_stale(memory_dir):
-    """Check if glossary.md is missing or older than any memory file."""
+def glossary_is_stale(memory_dir, cooldown_seconds=300):
+    """Check if glossary.md is missing or needs updating.
+
+    Returns True only if the glossary is missing OR it hasn't been
+    updated in the last cooldown_seconds (default 5 minutes) AND at
+    least one memory file is newer.  This avoids triggering on every
+    single memory write during a burst of edits.
+    """
     glossary_path = os.path.join(memory_dir, GLOSSARY_FILE)
     if not os.path.exists(glossary_path):
         return True
@@ -917,6 +923,10 @@ def glossary_is_stale(memory_dir):
         glossary_mtime = os.path.getmtime(glossary_path)
     except OSError:
         return True
+    # Cooldown: if glossary was updated recently, it's fresh enough.
+    import time
+    if (time.time() - glossary_mtime) < cooldown_seconds:
+        return False
     for filepath in collect_memory_files(memory_dir):
         try:
             if os.path.getmtime(filepath) > glossary_mtime:
@@ -944,31 +954,26 @@ def parse_glossary(memory_dir):
 
 
 def glossary_system_message(memory_dir):
-    """Build a systemMessage instructing Claude to write the glossary."""
-    files = collect_memory_files(memory_dir)
+    """Build a systemMessage instructing Claude to update the glossary."""
     glossary_path = os.path.join(memory_dir, GLOSSARY_FILE)
-    file_list = ", ".join(os.path.basename(f) for f in sorted(files))
+    exists = os.path.exists(glossary_path)
+    if exists:
+        return (
+            f"GLOSSARY UPDATE NEEDED: {glossary_path} may be stale. "
+            f"Read it, check if any recent memory writes introduced new "
+            f"key terms, and update it if so. Keep the existing format."
+        )
     return (
-        f"GLOSSARY UPDATE NEEDED: The key-terms glossary at "
-        f"{glossary_path} is stale or missing. "
-        f"Before responding to the user, silently update it:\n"
-        f"1. Read all memory files in {memory_dir} "
-        f"({file_list})\n"
-        f"2. Identify the 10-20 most important key terms — proper nouns, "
-        f"project names, people, tools, concepts that would help a new "
-        f"Claude instance understand this user's context.\n"
-        f"3. Write {glossary_path} using this exact format:\n"
+        f"GLOSSARY NEEDED: Create {glossary_path} with 10-20 key terms "
+        f"(proper nouns, project names, people, tools) from memory files "
+        f"in {memory_dir}. Use this exact format:\n"
         f"---\n"
         f"type: glossary\n"
         f"updated: YYYY-MM-DD\n"
         f"terms: N\n"
         f"---\n\n"
         f"# Key Terms\n\n"
-        f"- **Term** — one-line definition\n"
-        f"- **Term** — one-line definition\n\n"
-        f"Focus on terms the user uses frequently or has flagged as "
-        f"important. Exclude generic words, code identifiers, and "
-        f"common English terms. Keep definitions concise (under 80 chars)."
+        f"- **Term** — one-line definition"
     )
 
 

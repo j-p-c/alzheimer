@@ -912,7 +912,7 @@ class TestGlossary(unittest.TestCase):
             self._make_tree(d)
             _, _, messages = rebalance(d, max_lines=150)
             self.assertTrue(len(messages) > 0)
-            self.assertIn("GLOSSARY UPDATE NEEDED", messages[0])
+            self.assertIn("GLOSSARY NEEDED", messages[0])
 
     def test_stale_glossary_no_file_created(self):
         """Rebalance does NOT create glossary.md — Claude does that."""
@@ -1033,16 +1033,17 @@ class TestGlossary(unittest.TestCase):
             self.assertEqual(len(messages), 0)
 
     def test_stale_glossary_detected(self):
-        """glossary_is_stale returns True when memory file is newer."""
+        """glossary_is_stale returns True when memory file is newer and cooldown passed."""
         with TestDir() as d:
             self._make_tree(d)
             self._make_glossary(d)
+            # With default cooldown, just-written glossary is fresh.
             self.assertFalse(glossary_is_stale(d))
-            # Touch a memory file to make it newer.
+            # With zero cooldown, a newer file triggers staleness.
             import time
             time.sleep(0.05)
             make_leaf(d, "new.md", "user", "New", "New entry")
-            self.assertTrue(glossary_is_stale(d))
+            self.assertTrue(glossary_is_stale(d, cooldown_seconds=0))
 
     def test_parse_glossary(self):
         """parse_glossary extracts term names."""
@@ -1053,13 +1054,20 @@ class TestGlossary(unittest.TestCase):
                              ["Project Zenith", "Server Omega", "Team Delta"])
 
     def test_glossary_system_message_content(self):
-        """systemMessage includes file list and instructions."""
+        """systemMessage is concise and appropriate for glossary state."""
         with TestDir() as d:
             self._make_tree(d, n_files=4)
+            # No glossary exists — should get GLOSSARY NEEDED.
+            msg = glossary_system_message(d)
+            self.assertIn("GLOSSARY NEEDED", msg)
+            self.assertIn("key terms", msg)
+            # With existing glossary — should get shorter update message.
+            self._make_glossary(d)
             msg = glossary_system_message(d)
             self.assertIn("GLOSSARY UPDATE NEEDED", msg)
-            self.assertIn("proj_0.md", msg)
-            self.assertIn("10-20 most important key terms", msg)
+            self.assertIn("may be stale", msg)
+            # Should NOT contain individual file names.
+            self.assertNotIn("proj_0.md", msg)
 
     def test_build_glossary_entry_truncation(self):
         """Long term lists are truncated in MEMORY.md entry."""
@@ -1089,9 +1097,11 @@ class TestGlossary(unittest.TestCase):
         with TestDir() as d:
             self._make_tree(d)
             self._make_glossary(d)
-            # Make glossary stale by adding a new file.
+            # Make glossary stale: backdate it past cooldown, then add file.
             import time
-            time.sleep(0.05)
+            gpath = os.path.join(d, GLOSSARY_FILE)
+            old_time = time.time() - 600
+            os.utime(gpath, (old_time, old_time))
             make_leaf(d, "new.md", "user", "New", "New entry")
             with open(os.path.join(d, "MEMORY.md"), "a") as f:
                 f.write("- [New](new.md) — new entry\n")
@@ -1333,7 +1343,7 @@ class TestHookCLIOutput(unittest.TestCase):
             self.assertIn("hookSpecificOutput", obj)
             self.assertIn("additionalContext",
                           obj["hookSpecificOutput"])
-            self.assertIn("GLOSSARY UPDATE NEEDED",
+            self.assertIn("GLOSSARY NEEDED",
                           obj["hookSpecificOutput"]["additionalContext"])
 
     def test_hook_event_name_passed_through(self):
@@ -1374,7 +1384,7 @@ class TestHookCLIOutput(unittest.TestCase):
             self.assertIn("hookSpecificOutput", obj)
             hso = obj["hookSpecificOutput"]
             self.assertEqual(hso["hookEventName"], "PreCompact")
-            self.assertIn("GLOSSARY UPDATE NEEDED", hso["additionalContext"])
+            self.assertIn("GLOSSARY NEEDED", hso["additionalContext"])
 
     def test_unsupported_event_folds_context(self):
         """Unknown/missing hook event folds context into systemMessage."""
@@ -1385,7 +1395,7 @@ class TestHookCLIOutput(unittest.TestCase):
             lines, _ = self._run_hook(d)
             obj = json.loads(lines[0])
             self.assertNotIn("hookSpecificOutput", obj)
-            self.assertIn("GLOSSARY UPDATE NEEDED", obj["systemMessage"])
+            self.assertIn("GLOSSARY NEEDED", obj["systemMessage"])
 
     def test_hook_no_additional_context_when_fresh(self):
         """When glossary is fresh and no warnings, no hookSpecificOutput."""
