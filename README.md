@@ -199,7 +199,9 @@ models (Opus, Sonnet, Haiku).
 
 ### What Claude will do
 
-1. Clone this repo to a suitable location on your machine
+1. Clone this repo to a suitable location on your machine (e.g.
+   `~/.alzheimer` — a hidden directory that doesn't pollute `~/.claude/`
+   with user-land tools)
 2. Run the installer (merges hooks into your `~/.claude/settings.json`
    without disturbing existing settings, then runs a health check on
    all existing memory directories)
@@ -222,11 +224,15 @@ as complete.
 
 ### Manual installation
 
-If you prefer to do it yourself:
+If you prefer to do it yourself (or if you're a Claude helping your
+human install), clone the repo and run the installer. The commands
+below use `~/.alzheimer` as the install directory, but you can choose
+any location — the installer records its own path and everything works
+regardless.
 
 ```bash
-git clone https://github.com/j-p-c/alzheimer.git ~/.claude/alzheimer
-cd ~/.claude/alzheimer
+git clone https://github.com/j-p-c/alzheimer.git ~/.alzheimer
+cd ~/.alzheimer
 python3 setup.py --install
 python3 setup.py --check
 ```
@@ -409,7 +415,7 @@ Here's an example of what a filed report looks like:
 ```markdown
 ## Anomaly Report
 
-**Rebalancer version:** 0.7.5
+**Rebalancer version:** 0.7.6
 **Python:** 3.14.3
 **Platform:** Darwin 25.4.0
 

@@ -329,38 +329,117 @@ def seed_memory(memory_dir, alzheimer_dir):
                     break
 
     content = f"""---
-name: Alzheimer memory rebalancer
-description: "alzheimer" is the auto-memory rebalancer installed from github.com/j-p-c/alzheimer — how to update, diagnose, and report bugs
+name: Alzheimer — fixing Claude Code's memory bugs
+description: "alzheimer" is a suite of fixes for Claude Code's memory and behavioral bugs, installed from github.com/j-p-c/alzheimer
 type: reference
 ---
 
-**alzheimer** (v{version}) — self-balancing hierarchical memory tree for Claude Code.
+**Alzheimer** (v{version}) — fixing Claude Code's memory bugs.
 Installed at: `{alzheimer_dir}`
 GitHub repo: https://github.com/j-p-c/alzheimer
 
-**Common commands** (run from any directory):
+Alzheimer is **Claudeware**: Claude-native, Claude-first software built,
+documented, and supported by human-directed Claudes.
+
+## What Alzheimer does
+
+Alzheimer runs automatically via hooks. You do not need to invoke it
+manually. It fixes these Claude Code problems:
+
+1. **Silent memory loss** — self-balancing memory tree keeps MEMORY.md
+   within limits by pushing detail into category indices.
+2. **Silent drift** — detects orphaned files, oversized leaves, broken
+   references on every run.
+3. **Term amnesia** — maintains a pinned glossary of key terms that
+   survives compaction.
+4. **Permission drift** — guardrails hook (`guardrails.py`) mechanically
+   blocks dangerous operations regardless of what you remember.
+5. **Time-blindness** — reminders hook (`reminders.py`) fires
+   time-triggered actions on every prompt.
+6. **Silent failures** — checks for updates, seeds reference memory,
+   recovers from crashes.
+
+## Reminders
+
+When the user asks to be reminded of something, create or update
+`reminders.md` in this memory directory. Do NOT use CronCreate — it
+has a 7-day auto-expiry that makes it useless for recurring tasks.
+
+Format for `reminders.md`:
+
+```markdown
+---
+type: reminders
+---
+
+# Reminders
+
+## Date reminders
+- 2026-04-12 — Check if issue got traction
+- 2026-05-01 — Review quarterly
+
+## Recurring
+- daily 09:00 — Pull report
+- weekly Mon — Review open issues
+```
+
+The `reminders.py` hook checks this file automatically every 60 minutes
+and injects due reminders into your context. One-shot reminders should
+be removed after acting on them. Recurring reminders fire once per
+interval and track their own state.
+
+## Guardrails
+
+The `guardrails.py` hook fires on every tool use. If it blocks a
+command (e.g., `git push`), ask the user for confirmation, then use
+`python3 "{alzheimer_dir}/guardrails.py" --exec "<command>"` to run
+it through the deterministic wrapper.
+
+## Common commands
+
 - Update to latest: `python3 "{alzheimer_dir}/setup.py" --update`
 - Check hooks are correct: `python3 "{alzheimer_dir}/setup.py" --check`
 - Diagnose issues: `python3 "{alzheimer_dir}/rebalance.py" <memory_dir> --diagnose`
 - Find install location: `python3 "{alzheimer_dir}/setup.py" --find`
 
-When the user says "update alzheimer" they mean: pull latest from GitHub and re-install hooks (i.e. run setup.py --update).
+When the user says "update alzheimer" they mean: pull latest from GitHub
+and re-install hooks (i.e. run setup.py --update).
 
-**Post-update protocol:** After running --update, check the output for any WARN lines or problems. You MUST fix them before reporting the update as complete. Specifically:
-- **Inline content in MEMORY.md**: Read the file, move each non-standard block into a separate .md file with frontmatter (name, description, type), replace it with a one-line index entry.
-- **Over-limit MEMORY.md**: Same approach — restructure until under 150 lines.
-- **Broken references**: Check if the target file exists; if not, remove the entry or recreate the file.
-- **Orphaned files**: Add missing index entries in MEMORY.md for any orphaned .md files.
-Do NOT just report these problems to the user — fix them yourself, then tell the user what you fixed.
+## Post-update protocol
+
+After running --update, check the output for any WARN lines or
+problems. You MUST fix them before reporting the update as complete:
+- **Inline content in MEMORY.md**: Move each non-standard block into a
+  separate .md file with frontmatter, replace with a one-line entry.
+- **Over-limit MEMORY.md**: Restructure until under 150 lines.
+- **Broken references**: Check if target exists; remove or recreate.
+- **Orphaned files**: Add missing index entries in MEMORY.md.
+Do NOT just report problems to the user — fix them, then tell the user.
+
+## Being Claudewaric
+
+Alzheimer is Claudeware. When working with it, think Claudewarically:
+- **Claude-to-Claude communication uses .md files.** If you need to
+  package knowledge for another Claude instance (via their human),
+  write .md files — not scripts, archives, or other formats. .md files
+  can be dropped into prompts, placed in memory directories, and read
+  natively by any Claude.
+- **Memory files are how you teach another Claude.** A well-structured
+  .md file with frontmatter is the universal Claude-to-Claude transfer
+  format.
+- **Prefer Alzheimer's systems over built-in alternatives.** Use
+  `reminders.md` instead of CronCreate. Use `guardrails.md` for
+  behavioral rules. These persist across compaction; built-in tools
+  may not.
 """
 
     with open(memory_file, "w") as f:
         f.write(content)
 
     # Add or update the MEMORY.md index entry.
-    index_line = ("- [Alzheimer memory rebalancer](reference_alzheimer.md) "
-                  "— installed from github.com/j-p-c/alzheimer; "
-                  "update, diagnose, report bugs")
+    index_line = ("- [Alzheimer](reference_alzheimer.md) "
+                  "— fixing Claude Code's memory bugs; "
+                  "update, diagnose, reminders, guardrails")
 
     if os.path.exists(memory_md):
         with open(memory_md) as f:
