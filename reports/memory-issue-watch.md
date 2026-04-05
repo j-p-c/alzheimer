@@ -2,7 +2,7 @@
 
 Tracking open issues relevant to problems alzheimer solves: memory truncation, MEMORY.md overflow, silent memory loss, hierarchical memory, and memory management in Claude Code.
 
-<!-- Last scan: 2026-04-04 -->
+<!-- Last scan: 2026-04-05 -->
 
 ## Relevant Issues (Last 48h)
 
@@ -13,6 +13,10 @@ Tracking open issues relevant to problems alzheimer solves: memory truncation, M
 | 43407 | PreToolUse hooks returning exit 2 + deny JSON do not block tool execution | https://github.com/anthropics/claude-code/issues/43407 | Alzheimer's guardrails hard layer relies on PreToolUse exit 2 to block destructive commands — this bug means the hard layer may silently fail to block | 2026-04-04 |
 | 43450 | [BUG] PreCompact hook exit code 2 does not block compaction | https://github.com/anthropics/claude-code/issues/43450 | Alzheimer uses PreCompact to rebalance memory before context is lost; if exit 2 doesn't block compaction, alzheimer's pre-compact safety step can be bypassed | 2026-04-04 |
 | 43603 | [BUG] Post-compact auto-read doubles hook injections — configurable autoReadFiles needed | https://github.com/anthropics/claude-code/issues/43603 | Alzheimer's UserPromptSubmit reminders hook would be doubled on post-compact auto-reads, causing duplicate reminder injections | 2026-04-04 |
+| 43772 | Subagents with bypassPermissions ignore PreToolUse hooks — unauthorized commands, wasted tokens | https://github.com/anthropics/claude-code/issues/43772 | Alzheimer's hard-layer guardrails rely on PreToolUse hooks to block destructive commands; bypassPermissions mode in subagents silently circumvents the entire hard layer, allowing unauthorized commits, deletions, and permission changes | 2026-04-05 |
+| 43733 | PreCompact hook: allow Claude to take actions before context compaction (write session state) | https://github.com/anthropics/claude-code/issues/43733 | Requests PreCompact hooks that trigger Claude actions (not just shell commands) to write session state before compaction — would strengthen Alzheimer's pre-compaction memory rebalancing and enable structured session-state writing | 2026-04-05 |
+| 43716 | Opus 4.6 (1M): Ignores CLAUDE.md rules and user instructions in long sessions | https://github.com/anthropics/claude-code/issues/43716 | Permission drift over ~8h sessions: CLAUDE.md rules progressively ignored, destructive action taken (deleted 331 lines of chat history) in violation of explicit rules — exactly the behavioral failure Alzheimer's deterministic hard-layer guardrails prevent | 2026-04-05 |
+| 43632 | [4.6 opus MODEL] Built-in system prompt rules override CLAUDE.md and hooks — model ignores user-configured verification rules | https://github.com/anthropics/claude-code/issues/43632 | Built-in defaults override user rules even when CLAUDE.md + hooks + session memory all configured; user lost data across 10+ sessions — demonstrates why Alzheimer's deterministic PreToolUse hard layer (code, not attention) is necessary | 2026-04-05 |
 | 43557 | Claude Code reads CLAUDE.md behavioral rules but doesn't follow them during task execution | https://github.com/anthropics/claude-code/issues/43557 | Memory/rules read but not mechanically enforced — precisely the gap alzheimer's hard-layer PreToolUse guardrails fix via deterministic code | 2026-04-04 |
 | 42542 | [BUG] Silent context degradation — tool results cleared without notification on 1M context sessions | https://github.com/anthropics/claude-code/issues/42542 | Silent degradation of tool results is the same class of silent data loss alzheimer's drift detection and in-dev historical memory address | 2026-04-02 |
 
@@ -52,13 +56,14 @@ Issues where j-p-c has commented. Checked for new replies each scan.
 
 | # | Title | URL | Last checked | New replies? | Notes |
 |---|-------|-----|--------------|--------------|-------|
-| 41671 | [Bug] Auto-memory writes inline content to MEMORY.md instead of creating linked files | https://github.com/anthropics/claude-code/issues/41671 | 2026-04-04 | No | j-p-c last commented 2026-04-01; no new replies since |
-| 41356 | Agent ignores loaded memory rules when delegating to subagents | https://github.com/anthropics/claude-code/issues/41356 | 2026-04-04 | No | j-p-c last commented 2026-04-01; no new replies since |
-| 41283 | Memory identity is derived from filesystem path, causing orphaned memories | https://github.com/anthropics/claude-code/issues/41283 | 2026-04-04 | Unknown | Rate-limited; last known comment j-p-c 2026-04-02 |
-| 40614 | [FEATURE] Hierarchical memory to prevent silent loss at 200-line MEMORY.md limit | https://github.com/anthropics/claude-code/issues/40614 | 2026-04-04 | No | Last activity 2026-04-02 (j-p-c replied to @prodan-s hook fix, @mikeadolan SQLite comparison); no new replies since |
-| 40210 | [BUG] Memory index appends new entries at bottom but truncates from bottom — newest memories lost first | https://github.com/anthropics/claude-code/issues/40210 | 2026-04-04 | No | Last activity 2026-04-02 (@taipan303 reported using alzheimer); no new replies since |
-| 27298 | Feature Request: Layered memory system for persistent cross-session context | https://github.com/anthropics/claude-code/issues/27298 | 2026-04-04 | No | Last activity 2026-02-21; no new replies since |
-| 43156 | VS Code extension: uninterruptible processing loop causes irrecoverable data loss | https://github.com/anthropics/claude-code/issues/43156 | 2026-04-04 | New entry | j-p-c posted 2 comments 2026-04-03 including screen recording; related to data loss under VS Code, sister concern to alzheimer's VS Code status-line gap (#15344) |
+| 41671 | [Bug] Auto-memory writes inline content to MEMORY.md instead of creating linked files | https://github.com/anthropics/claude-code/issues/41671 | 2026-04-05 | No | j-p-c last commented 2026-04-01; no new replies since |
+| 41356 | Agent ignores loaded memory rules when delegating to subagents | https://github.com/anthropics/claude-code/issues/41356 | 2026-04-05 | No | j-p-c last commented 2026-04-01; no new replies since |
+| 41283 | Memory identity is derived from filesystem path, causing orphaned memories | https://github.com/anthropics/claude-code/issues/41283 | 2026-04-05 | No | j-p-c last commented 2026-04-02; confirmed no new replies since |
+| 40614 | [FEATURE] Hierarchical memory to prevent silent loss at 200-line MEMORY.md limit | https://github.com/anthropics/claude-code/issues/40614 | 2026-04-05 | No | Last activity 2026-04-02 (@mikeadolan SQLite comparison); no new replies since |
+| 40210 | [BUG] Memory index appends new entries at bottom but truncates from bottom — newest memories lost first | https://github.com/anthropics/claude-code/issues/40210 | 2026-04-05 | No | Last activity 2026-04-02 (@taipan303 reported using alzheimer); no new replies since |
+| 27298 | Feature Request: Layered memory system for persistent cross-session context | https://github.com/anthropics/claude-code/issues/27298 | 2026-04-05 | No | Last activity 2026-02-24 (singularityjason shared OMEGA memory system); no new replies since |
+| 43156 | VS Code extension: uninterruptible processing loop causes irrecoverable data loss | https://github.com/anthropics/claude-code/issues/43156 | 2026-04-05 | No | j-p-c posted 2 comments 2026-04-03 including screen recording; no new replies since |
+| 42772 | VS Code extension: auto-collapsing user prompts in chat history (no setting to disable) | https://github.com/anthropics/claude-code/issues/42772 | 2026-04-05 | New entry | j-p-c commented 2026-04-05 with detailed observations about non-deterministic "Show more" button behavior; VS Code UI issue, not Alzheimer-specific |
 
 ---
 
