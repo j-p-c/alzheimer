@@ -10,7 +10,8 @@ configurable rules and blocks those that match by exiting non-zero.
 The hook receives tool information as JSON on stdin:
     {"tool_name": "Bash", "tool_input": {"command": "git push origin main"}}
 
-Exit 0 to allow, exit 2 with a JSON error message to block.
+Exit 0 to allow. To block: emit hookSpecificOutput deny JSON on stdout,
+error message on stderr, and exit 2 (belt-and-suspenders per #37210).
 
 Three action types:
   - "allow": no rule matched — tool call proceeds
@@ -374,8 +375,17 @@ def main_hook():
     if allowed:
         sys.exit(0)
     else:
-        # Exit code 2 blocks the tool call and shows stderr to the model.
-        # Exit code 1 would only show stderr to the user without blocking.
+        # Block the tool call using both mechanisms for maximum reliability:
+        # 1. Structured deny JSON on stdout (canonical protocol per #37210).
+        # 2. Exit code 2 (backup; fixed in v2.1.90, was broken before).
+        # 3. Human-readable reason on stderr (shown to the model).
+        deny = json.dumps({
+            "hookSpecificOutput": {
+                "permissionDecision": "deny",
+                "permissionDecisionReason": message,
+            }
+        })
+        print(deny)  # stdout — parsed by Claude Code
         print(json.dumps({"error": message}), file=sys.stderr)
         sys.exit(2)
 

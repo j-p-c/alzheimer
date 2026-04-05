@@ -168,6 +168,36 @@ def check_date_reminders(reminders, today=None):
     return due
 
 
+# ── Atomic reminder clearing ────────────────────────────────────────
+
+def clear_reminder(date_prefix):
+    """Remove a completed one-shot reminder from reminders.md files.
+
+    Matches lines starting with '- {date_prefix}' and removes the
+    first match. Returns (filepath, removed_line) or (None, None).
+
+    Python handles the file mutation atomically; Claude decides
+    when to call it after acting on the reminder.
+    """
+    pattern = f"- {date_prefix}"
+
+    for path in find_reminder_files():
+        try:
+            with open(path) as f:
+                lines = f.readlines()
+        except OSError:
+            continue
+
+        for i, line in enumerate(lines):
+            if line.strip().startswith(pattern):
+                removed = lines.pop(i)
+                with open(path, "w") as f:
+                    f.writelines(lines)
+                return (path, removed.strip())
+
+    return (None, None)
+
+
 def check_recurring_reminders(reminders, now=None):
     """Check which recurring reminders are due.
 

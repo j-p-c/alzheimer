@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.9"
+VERSION = "0.7.10"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -961,12 +961,19 @@ def glossary_system_message(memory_dir):
         return (
             f"GLOSSARY UPDATE NEEDED: {glossary_path} may be stale. "
             f"Read it, check if any recent memory writes introduced new "
-            f"key terms, and update it if so. Keep the existing format."
+            f"key terms, and update it if so. Keep the existing format. "
+            f"Include any term with a specific local meaning — not just "
+            f"proper nouns, but workflows, rituals, and common words the "
+            f"user has redefined."
         )
     return (
         f"GLOSSARY NEEDED: Create {glossary_path} with 10-20 key terms "
-        f"(proper nouns, project names, people, tools) from memory files "
-        f"in {memory_dir}. Use this exact format:\n"
+        f"from memory files in {memory_dir}. Include any term the user "
+        f"uses with a specific meaning in this collaboration — people, "
+        f"projects, tools, workflows, rituals, and common words that "
+        f"have been given local definitions. The test: would a fresh "
+        f"post-compaction Claude understand what the user means? "
+        f"Use this exact format:\n"
         f"---\n"
         f"type: glossary\n"
         f"updated: YYYY-MM-DD\n"
