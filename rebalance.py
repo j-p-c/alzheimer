@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.11"
+VERSION = "0.7.12"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -405,25 +405,38 @@ def _alzheimer_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _get_local_head(alzheimer_dir):
+    """Return the current local HEAD hash, or empty string on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=alzheimer_dir, capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+
+
 def _read_update_cache(cache_path):
     """Read the update cache file.  Returns (timestamp, behind_count,
-    emitted_at) or (0, 0, 0) if the cache is missing or unreadable."""
+    emitted_at, head) or (0, 0, 0, "") if the cache is missing or
+    unreadable."""
     try:
         with open(cache_path) as f:
             data = json.load(f)
         return (data.get("timestamp", 0), data.get("behind", 0),
-                data.get("emitted_at", 0))
+                data.get("emitted_at", 0), data.get("head", ""))
     except (OSError, json.JSONDecodeError, ValueError):
-        return 0, 0, 0
+        return 0, 0, 0, ""
 
 
-def _write_update_cache(cache_path, behind, emitted_at=0):
+def _write_update_cache(cache_path, behind, emitted_at=0, head=""):
     """Write the update cache file."""
     import time
     try:
         with open(cache_path, "w") as f:
             json.dump({"timestamp": time.time(), "behind": behind,
-                        "emitted_at": emitted_at}, f)
+                        "emitted_at": emitted_at, "head": head}, f)
     except OSError:
         pass
 
@@ -449,7 +462,14 @@ def check_for_updates(alzheimer_dir=None, force=False):
         return 0, None
 
     cache_path = os.path.join(alzheimer_dir, UPDATE_CACHE_FILE)
-    cached_ts, cached_behind, cached_emitted = _read_update_cache(cache_path)
+    cached_ts, cached_behind, cached_emitted, cached_head = \
+        _read_update_cache(cache_path)
+
+    # If HEAD has moved since we cached (e.g. manual git pull, or update
+    # via a mechanism that didn't clear the cache), invalidate.
+    current_head = _get_local_head(alzheimer_dir)
+    if cached_head and current_head and cached_head != current_head:
+        cached_ts = 0  # Force re-check.
 
     now = time.time()
     if not force and (now - cached_ts) < UPDATE_CHECK_INTERVAL:
@@ -460,7 +480,8 @@ def check_for_updates(alzheimer_dir=None, force=False):
             # prior memory directory in the same session), skip it.
             if cached_emitted and (now - cached_emitted) < 60:
                 return 0, None
-            _write_update_cache(cache_path, cached_behind, emitted_at=now)
+            _write_update_cache(cache_path, cached_behind, emitted_at=now,
+                                head=cached_head)
             return cached_behind, (
                 f"alzheimer update available: {cached_behind} new "
                 f"commit(s) on origin/main. Tell the user and offer "
@@ -494,7 +515,8 @@ def check_for_updates(alzheimer_dir=None, force=False):
         return 0, None
 
     _write_update_cache(cache_path, behind,
-                        emitted_at=time.time() if behind > 0 else 0)
+                        emitted_at=time.time() if behind > 0 else 0,
+                        head=current_head)
 
     if behind > 0:
         return behind, (
