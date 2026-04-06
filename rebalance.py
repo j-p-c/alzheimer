@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.10"
+VERSION = "0.7.11"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -476,8 +476,10 @@ def check_for_updates(alzheimer_dir=None, force=False):
             capture_output=True, text=True, timeout=10
         )
         if fetch.returncode != 0:
-            # Fetch failed (offline, no remote, etc.) — skip silently.
-            _write_update_cache(cache_path, 0)
+            # Fetch failed (offline, no remote, etc.).  Do NOT cache
+            # behind=0 here — that would poison the cache for 24 hours,
+            # recording "no updates" when we simply couldn't check.
+            # Leave the cache as-is so next SessionStart retries.
             return 0, None
 
         # Count commits we're behind.
@@ -488,7 +490,7 @@ def check_for_updates(alzheimer_dir=None, force=False):
         )
         behind = int(rev_list.stdout.strip()) if rev_list.returncode == 0 else 0
     except (subprocess.TimeoutExpired, OSError, ValueError):
-        _write_update_cache(cache_path, 0)
+        # Same principle: don't cache a false "up to date" on error.
         return 0, None
 
     _write_update_cache(cache_path, behind,
