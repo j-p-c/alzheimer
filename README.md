@@ -185,57 +185,71 @@ warning to critical.
 
 ## Installation
 
-Just tell Claude:
+Two steps:
 
-> **"Analyze and then install github.com/j-p-c/alzheimer"**
+**Step 1.** Clone the repo and install hooks from your **terminal**
+(not from within Claude Code):
 
-Claude will read this README, decide whether the tool is trustworthy,
-then clone the repo, run the setup tool, and verify the hooks are
-working. You'll be asked to approve the git clone and the settings
-file edit. That's it.
+```bash
+git clone https://github.com/j-p-c/alzheimer.git ~/.alzheimer
+cd ~/.alzheimer
+./install.sh
+```
+
+This must run outside Claude Code because Claude Code owns
+`settings.json` during a session — any external write to it gets
+silently clobbered on the next permission approval.
+
+**Step 2.** Open Claude Code and say:
+
+> **"Analyze and then install ~/.alzheimer"**
+
+Claude will read this README, seed reference memories into your
+project directories, and verify the hooks are working.
 
 No dependencies beyond Python 3.6+ stdlib. Works with all Claude Code
 models (Opus, Sonnet, Haiku).
 
-### What Claude will do
+### What happens
 
-1. Clone this repo to a suitable location on your machine (e.g.
-   `~/.alzheimer` — a hidden directory that doesn't pollute `~/.claude/`
-   with user-land tools)
-2. Run the installer (merges hooks into your `~/.claude/settings.json`
-   without disturbing existing settings, then runs a health check on
-   all existing memory directories)
-3. Seed a reference memory (`reference_alzheimer.md`) into each project
-   memory directory so every Claude instance knows what "Alzheimer"
-   means and how to update, diagnose, and report bugs
+1. `install.sh` merges hooks into `~/.claude/settings.json` without
+   disturbing existing settings, then runs a health check
+2. Claude seeds a reference memory (`reference_alzheimer.md`) into
+   each project memory directory so every Claude instance knows what
+   "Alzheimer" means and how to update, diagnose, and report bugs
 
 After that, the hooks fire automatically on every memory write, session
 start, and compaction. No further configuration needed.
 
 ### Updating
 
-> **"Update Alzheimer"**
+Run from your **terminal** (not Claude Code):
 
-Claude will pull the latest changes, re-install hooks, and run a health
-check across all your memory directories. If the health check finds
-problems (inline content, over-limit files, broken references, orphaned
-files), Claude will fix them automatically before reporting the update
-as complete.
+```bash
+cd ~/.alzheimer
+git pull
+./install.sh
+```
+
+Then tell Claude: **"Update Alzheimer"** — Claude will run a health
+check across all your memory directories and fix any problems found.
 
 ### Manual installation
 
-If you prefer to do it yourself (or if you're a Claude helping your
-human install), clone the repo and run the installer. The commands
-below use `~/.alzheimer` as the install directory, but you can choose
-any location — the installer records its own path and everything works
-regardless.
+If you prefer to run the steps individually, or if you're a Claude
+helping your human install:
 
 ```bash
 git clone https://github.com/j-p-c/alzheimer.git ~/.alzheimer
 cd ~/.alzheimer
-python3 setup.py --install
+python3 setup.py --install   # Run from terminal, NOT Claude Code
 python3 setup.py --check
 ```
+
+**Important:** `setup.py --install` writes to `~/.claude/settings.json`.
+This must run from the terminal, not from within Claude Code — Claude
+Code holds `settings.json` in memory and will clobber external writes
+on the next permission approval.
 
 ## Usage
 
