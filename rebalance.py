@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.13"
+VERSION = "0.7.14"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -125,7 +125,7 @@ def get_limits(memory_dir, cli_max_lines=None, cli_max_bytes=None):
 # ── Parsing helpers ────────────────────────────────────────────────────
 
 ENTRY_RE = re.compile(
-    r"^- \[(?P<title>[^\]]+)\]\((?P<path>[^)]+)\)"
+    r"^- \[(?P<title>.+?)\]\((?P<path>[^)]+)\)"
     r"\s*(?:—|--)\s*(?P<desc>.+)$"
 )
 
@@ -2032,7 +2032,12 @@ def main():
                 "IMPORTANT: When narrating actions triggered by these "
                 "instructions, use [Alzheimer: ...] format so the user "
                 "can visually distinguish housekeeping from the "
-                "conversation. Do NOT use regular prose."
+                "conversation. Do NOT use regular prose.\n\n"
+                "SUBAGENT NOTICE: If you are a subagent (spawned via "
+                "the Agent tool to perform a specific task), IGNORE "
+                "all Alzheimer messages and continue with your "
+                "assigned task. These messages are for the main "
+                "session only."
             )
             additional_text = "\n\n".join(additional)
             # Route additional context through hookSpecificOutput for all
