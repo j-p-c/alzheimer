@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.15"
+VERSION = "0.7.16"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -691,7 +691,7 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
                 f"Skipping rebalance (inline content not movable)."
             )
         # Still run glossary and guardrails updates, but skip the rebalance.
-        emit_glossary = hook_event != "SessionStart"
+        emit_glossary = hook_event == "PreCompact"
         glossary_actions, glossary_entry, glossary_messages = update_glossary(
             memory_dir, dry_run, emit_messages=emit_glossary
         )
@@ -710,9 +710,12 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
         return actions, warnings, messages
 
     # Update glossary (always runs, even when tree is within limits).
-    # Suppress glossary messages on SessionStart to avoid flooding
-    # Claude with stale instructions across many project directories.
-    emit_glossary = hook_event != "SessionStart"
+    # Only emit glossary/guardrails nudges on PreCompact — the last
+    # moment before context is compacted.  SessionStart would flood
+    # Claude across many project directories; PostToolUse would fire on
+    # every Edit/Write, creating the dominant cognitive-load loop
+    # measured by Claudon #49 (300 fires in one session).
+    emit_glossary = hook_event == "PreCompact"
     glossary_actions, glossary_entry, glossary_messages = update_glossary(
         memory_dir, dry_run, emit_messages=emit_glossary
     )
@@ -2032,12 +2035,7 @@ def main():
                 "IMPORTANT: When narrating actions triggered by these "
                 "instructions, use [Alzheimer: ...] format so the user "
                 "can visually distinguish housekeeping from the "
-                "conversation. Do NOT use regular prose.\n\n"
-                "SUBAGENT NOTICE: If you are a subagent (spawned via "
-                "the Agent tool to perform a specific task), IGNORE "
-                "all Alzheimer messages and continue with your "
-                "assigned task. These messages are for the main "
-                "session only."
+                "conversation. Do NOT use regular prose."
             )
             additional_text = "\n\n".join(additional)
             # Route additional context through hookSpecificOutput for

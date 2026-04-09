@@ -907,10 +907,13 @@ class TestGlossary(unittest.TestCase):
             f.write("\n".join(lines))
 
     def test_stale_glossary_emits_message(self):
-        """When glossary is missing, rebalance emits a systemMessage."""
+        """When glossary is missing, PreCompact rebalance emits a systemMessage."""
         with TestDir() as d:
             self._make_tree(d)
-            _, _, messages = rebalance(d, max_lines=150)
+            # Glossary nudges only fire on PreCompact (per Claudon #49's
+            # cognitive-load findings — PostToolUse loop was dominant).
+            _, _, messages = rebalance(
+                d, max_lines=150, hook_event="PreCompact")
             self.assertTrue(len(messages) > 0)
             self.assertIn("GLOSSARY NEEDED", messages[0])
 
@@ -1105,7 +1108,9 @@ class TestGlossary(unittest.TestCase):
             make_leaf(d, "new.md", "user", "New", "New entry")
             with open(os.path.join(d, "MEMORY.md"), "a") as f:
                 f.write("- [New](new.md) — new entry\n")
-            actions, _, messages = rebalance(d, max_lines=150)
+            # Glossary nudges only fire on PreCompact post-#49.
+            actions, _, messages = rebalance(
+                d, max_lines=150, hook_event="PreCompact")
             # Should emit message (stale).
             self.assertTrue(len(messages) > 0)
             # Should still have glossary entry from old content.
@@ -1331,28 +1336,45 @@ class TestHookCLIOutput(unittest.TestCase):
             self.assertIn("systemMessage", obj)
             self.assertIn("alzheimer:", obj["systemMessage"])
 
-    def test_hook_glossary_in_additional_context(self):
-        """When glossary is stale, prompt goes in additionalContext."""
+    def test_hook_glossary_in_systemmessage_on_precompact(self):
+        """Stale glossary nudge fires only on PreCompact, routed via systemMessage."""
         import json
         with TestDir() as d:
             self._make_tree(d)
-            # No glossary file = stale; use PostToolUse (supports hso)
+            # Post-#49: glossary nudge fires only on PreCompact (not
+            # PostToolUse — that was the dominant cognitive-load loop).
+            # PreCompact's schema rejects hookSpecificOutput, so content
+            # falls through to systemMessage.
+            lines, _ = self._run_hook(d,
+                                      ["--hook-event", "PreCompact"])
+            obj = json.loads(lines[0])
+            self.assertIn("systemMessage", obj)
+            self.assertIn("GLOSSARY NEEDED", obj["systemMessage"])
+            self.assertNotIn("hookSpecificOutput", obj)
+
+    def test_hook_posttooluse_suppresses_glossary(self):
+        """PostToolUse no longer emits glossary nudges (Claudon #49 fix)."""
+        import json
+        with TestDir() as d:
+            self._make_tree(d)
             lines, _ = self._run_hook(d,
                                       ["--hook-event", "PostToolUse"])
             obj = json.loads(lines[0])
-            self.assertIn("hookSpecificOutput", obj)
-            self.assertIn("additionalContext",
-                          obj["hookSpecificOutput"])
-            self.assertIn("GLOSSARY NEEDED",
-                          obj["hookSpecificOutput"]["additionalContext"])
+            # No glossary message, no hookSpecificOutput, just status line.
+            self.assertNotIn("GLOSSARY", obj.get("systemMessage", ""))
+            self.assertNotIn("hookSpecificOutput", obj)
 
     def test_hook_event_name_passed_through(self):
-        """--hook-event value appears in hookSpecificOutput."""
+        """--hook-event value appears in hookSpecificOutput when hso content exists."""
         import json
         with TestDir() as d:
             self._make_tree(d)
-            # Use PostToolUse — SessionStart suppresses glossary messages,
-            # so there would be no hookSpecificOutput to carry the event name.
+            # Post-#49: glossary is suppressed on hso_supported events, so
+            # we need a different source of additional content to trigger
+            # the hookSpecificOutput path. An orphan file without valid
+            # frontmatter generates a drift warning, which populates it.
+            with open(os.path.join(d, "orphan.md"), "w") as f:
+                f.write("content without frontmatter\n")
             lines, _ = self._run_hook(d,
                                       ["--hook-event", "PostToolUse"])
             obj = json.loads(lines[0])
@@ -1387,15 +1409,19 @@ class TestHookCLIOutput(unittest.TestCase):
             self.assertIn("GLOSSARY NEEDED", hso["additionalContext"])
 
     def test_unsupported_event_folds_context(self):
-        """Unknown/missing hook event folds context into systemMessage."""
+        """Unknown/missing hook event folds additional content into systemMessage."""
         import json
         with TestDir() as d:
             self._make_tree(d)
-            # No --hook-event flag at all; glossary is stale
+            # No --hook-event flag at all. Post-#49, glossary is
+            # suppressed on non-PreCompact paths, so we trigger additional
+            # content via a drift warning (orphan without frontmatter).
+            with open(os.path.join(d, "orphan.md"), "w") as f:
+                f.write("content without frontmatter\n")
             lines, _ = self._run_hook(d)
             obj = json.loads(lines[0])
             self.assertNotIn("hookSpecificOutput", obj)
-            self.assertIn("GLOSSARY NEEDED", obj["systemMessage"])
+            self.assertIn("orphan", obj["systemMessage"].lower())
 
     def test_hook_no_additional_context_when_fresh(self):
         """When glossary is fresh and no warnings, no hookSpecificOutput."""
