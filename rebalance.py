@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.14"
+VERSION = "0.7.15"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -2040,12 +2040,18 @@ def main():
                 "session only."
             )
             additional_text = "\n\n".join(additional)
-            # Route additional context through hookSpecificOutput for all
-            # supported events.  SessionStart and PreCompact DO support
-            # additionalContext (confirmed via CC binary analysis, v2.1.90).
-            # Unknown/missing events fall back to systemMessage.
+            # Route additional context through hookSpecificOutput for
+            # events whose schema admits it: PostToolUse, UserPromptSubmit,
+            # SessionStart.  PreCompact does NOT — its validation schema
+            # rejects hookSpecificOutput, so PreCompact content falls
+            # through to systemMessage below.  That's fine: PreCompact
+            # fires immediately before context compaction, so injecting
+            # into Claude's context would be squashed milliseconds later
+            # anyway.  The next SessionStart hook will re-detect any
+            # still-live conditions and emit them through the working
+            # SessionStart path.
             hso_supported = ("PostToolUse", "UserPromptSubmit",
-                                "SessionStart", "PreCompact")
+                                "SessionStart")
             if args.hook_event and args.hook_event in hso_supported:
                 output["hookSpecificOutput"] = {
                     "additionalContext": additional_text,
