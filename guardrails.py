@@ -377,17 +377,17 @@ def main_hook():
     else:
         # Block the tool call using both mechanisms for maximum reliability:
         # 1. Structured deny JSON on stdout (canonical protocol per #37210).
-        # 2. Exit code 2 (backup; fixed in v2.1.90, was broken before).
-        # 3. Human-readable reason on stderr (shown to the model).
+        # Exit 0 so Claude Code parses stdout. Exit 2 causes stdout to be
+        # ignored, silently allowing the blocked command through.
         deny = json.dumps({
             "hookSpecificOutput": {
                 "permissionDecision": "deny",
                 "permissionDecisionReason": message,
-            }
+            },
+            "hookEventName": "PreToolUse",
         })
-        print(deny)  # stdout — parsed by Claude Code
-        print(json.dumps({"error": message}), file=sys.stderr)
-        sys.exit(2)
+        print(deny)  # stdout — parsed by Claude Code at exit 0
+        sys.exit(0)
 
 
 def main_exec(command):
