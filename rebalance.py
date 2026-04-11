@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.16"
+VERSION = "0.7.17"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -48,6 +48,23 @@ GLOSSARY_FILE = "glossary.md"
 GLOSSARY_MAX_TERMS = 20
 GLOSSARY_MIN_TERMS = 3    # Don't create glossary with fewer terms
 GUARDRAILS_FILE = "guardrails.md"
+EMERGENCY_FILE = "EMERGENCY.md"
+EMERGENCY_OK_MARKER = "<!-- OK -->"
+
+# Bootstrap directive — injected into MEMORY.md header so every session
+# and post-compaction load carries the "read _index first" instruction.
+BOOTSTRAP_START = "<!-- alzheimer:bootstrap:start -->"
+BOOTSTRAP_END = "<!-- alzheimer:bootstrap:end -->"
+BOOTSTRAP_TEXT = [
+    BOOTSTRAP_START,
+    "**BOOTSTRAP (read first):**",
+    "Your FIRST action in a new session or after compaction: Glob",
+    "`_index/*.md` and Read every match in parallel. They are one-line",
+    "summaries of every memory file in their category — complete",
+    "orientation in ~5 files instead of reading hundreds. Skipping this",
+    "means inheriting a fog of ignorance. Subagents: ignore this block.",
+    BOOTSTRAP_END,
+]
 
 # Config file name (placed in memory directory to override defaults).
 CONFIG_FILE = ".alzheimer.conf"
@@ -390,6 +407,115 @@ def write_index(filepath, header, entries):
         f.write("\n".join(lines))
 
 
+# ── Emergency dead man's switch ──────────────────────────────────────
+
+def check_emergency(memory_dir):
+    """Check EMERGENCY.md status.  Returns (ok, message).
+
+    ok=True  → no emergency, proceed normally.
+    ok=False → emergency in progress; message must be injected at highest
+               priority before any other output.
+
+    Dead man's switch: the HEALTHY state is an active signal (file exists
+    with OK marker on the first line).  Missing or empty = infrastructure
+    failure.  Content without OK marker = user emergency instructions.
+    """
+    emergency_path = os.path.join(memory_dir, EMERGENCY_FILE)
+
+    if not os.path.exists(emergency_path):
+        return False, (
+            "EMERGENCY: EMERGENCY.md is MISSING from the memory directory. "
+            "This is an infrastructure failure — the dead man's switch has "
+            "tripped. STOP all memory operations. Alert the user immediately: "
+            "\"Your EMERGENCY.md file is missing. This is Alzheimer's safety "
+            "mechanism. Please run: python3 <alzheimer>/rebalance.py "
+            f"{memory_dir} --init-emergency to restore it, or create "
+            f"{emergency_path} manually with '<!-- OK -->' on the first line.\""
+        )
+
+    try:
+        with open(emergency_path, "r") as f:
+            content = f.read()
+    except (IOError, OSError) as e:
+        return False, (
+            f"EMERGENCY: Cannot read EMERGENCY.md: {e}. "
+            "STOP all memory operations and alert the user."
+        )
+
+    if not content.strip():
+        return False, (
+            "EMERGENCY: EMERGENCY.md is EMPTY. The dead man's switch has "
+            "tripped. STOP all memory operations. Alert the user immediately: "
+            "\"Your EMERGENCY.md file is empty. This is Alzheimer's safety "
+            "mechanism. If everything is OK, restore the file with "
+            "'<!-- OK -->' on the first line.\""
+        )
+
+    first_line = content.split("\n", 1)[0].strip()
+    if first_line == EMERGENCY_OK_MARKER:
+        return True, None
+
+    # Content without OK marker = user emergency instructions.
+    return False, (
+        "EMERGENCY — USER INSTRUCTIONS IN EFFECT:\n\n"
+        + content.strip()
+        + "\n\nThese instructions were placed in EMERGENCY.md by the user. "
+        "Follow them before doing ANYTHING else."
+    )
+
+
+def init_emergency_file(memory_dir):
+    """Create a default EMERGENCY.md with the OK marker."""
+    emergency_path = os.path.join(memory_dir, EMERGENCY_FILE)
+    with open(emergency_path, "w") as f:
+        f.write(
+            f"{EMERGENCY_OK_MARKER}\n"
+            "No emergencies in progress. All is well. Proceed as normal.\n"
+        )
+    return emergency_path
+
+
+# ── Bootstrap directive ─────────────────────────────────────────────
+
+def ensure_memory_bootstrap(header, memory_dir):
+    """Idempotently inject the bootstrap directive into the MEMORY.md header.
+    Returns a (possibly) modified header list.
+    """
+    if not os.path.isdir(os.path.join(memory_dir, INDEX_DIR)):
+        return header  # No _index tree; directive would point at nothing.
+
+    # If an existing block is present, check whether it's current.
+    start_idx = end_idx = None
+    for i, line in enumerate(header):
+        if line.strip() == BOOTSTRAP_START:
+            start_idx = i
+        elif line.strip() == BOOTSTRAP_END:
+            end_idx = i
+            break
+
+    if start_idx is not None and end_idx is not None:
+        if header[start_idx:end_idx + 1] == BOOTSTRAP_TEXT:
+            return header  # Already current.
+        del header[start_idx:end_idx + 1]
+        if start_idx < len(header) and header[start_idx].strip() == "":
+            del header[start_idx]  # Strip trailing blank to avoid drift.
+
+    title_idx = None
+    for i, line in enumerate(header):
+        if line.strip() == "# Memory Index":
+            title_idx = i
+            break
+    if title_idx is None:
+        return header  # No title; don't corrupt the file.
+
+    insert_at = title_idx + 1
+    if insert_at < len(header) and header[insert_at].strip() == "":
+        insert_at += 1  # Land below the title's blank separator.
+
+    header[insert_at:insert_at] = BOOTSTRAP_TEXT + [""]
+    return header
+
+
 # ── Update staleness check ────────────────────────────────────────────
 
 # How often to check for updates (seconds).  One fetch per day keeps
@@ -551,7 +677,7 @@ def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
     warnings = []
 
     # Orphan check (exclude glossary — it's managed by the rebalancer).
-    pinned = {GLOSSARY_FILE, GUARDRAILS_FILE}
+    pinned = {GLOSSARY_FILE, GUARDRAILS_FILE, EMERGENCY_FILE}
     orphans = [o for o in find_orphans(memory_dir) if o not in pinned]
     if orphans:
         memory_md = os.path.join(memory_dir, "MEMORY.md")
@@ -604,7 +730,7 @@ def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
             )
 
     # Oversized leaf file check.
-    skip = {"MEMORY.md", GLOSSARY_FILE, GUARDRAILS_FILE}
+    skip = {"MEMORY.md", GLOSSARY_FILE, GUARDRAILS_FILE, EMERGENCY_FILE}
     oversized = []
     for name in sorted(os.listdir(memory_dir)):
         if name in skip or name.startswith("_") or not name.endswith(".md"):
@@ -658,6 +784,14 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
         return ["MEMORY.md not found — nothing to do."], [], []
 
     header, entries = parse_index(memory_md)
+
+    # Bootstrap directive — inject "read _index first" into MEMORY.md.
+    new_header = ensure_memory_bootstrap(list(header), memory_dir)
+    if new_header != header:
+        header = new_header
+        if not dry_run:
+            write_index(memory_md, header, entries)
+        actions.append("Injected/updated MEMORY.md bootstrap directive.")
 
     # Check for inline content that the rebalancer can't handle.
     inline_count, actual_lines = count_inline_content(memory_md)
@@ -926,7 +1060,7 @@ def extract_keywords(text):
 
 def collect_memory_files(memory_dir):
     """Return list of leaf memory file paths (excluding indices, glossary, guardrails)."""
-    skip = {"MEMORY.md", GLOSSARY_FILE, GUARDRAILS_FILE}
+    skip = {"MEMORY.md", GLOSSARY_FILE, GUARDRAILS_FILE, EMERGENCY_FILE}
     files = []
     for name in os.listdir(memory_dir):
         if name in skip or name.startswith("_") or not name.endswith(".md"):
@@ -1501,7 +1635,7 @@ def find_orphans(memory_dir):
     # Find all leaf .md files not in the reference set.
     orphans = []
     for fname in os.listdir(memory_dir):
-        if fname == "MEMORY.md":
+        if fname in ("MEMORY.md", EMERGENCY_FILE):
             continue
         if fname.endswith(".md"):
             if fname not in referenced:
@@ -1867,12 +2001,21 @@ def main():
         help="Hook event name (SessionStart, PostToolUse, PreCompact).",
     )
     parser.add_argument(
+        "--init-emergency", action="store_true",
+        help="Create a default EMERGENCY.md with the OK marker.",
+    )
+    parser.add_argument(
         "--version", action="version",
         version=f"alzheimer {VERSION}",
     )
     args = parser.parse_args()
 
     memory_dir = os.path.abspath(args.memory_dir)
+
+    if args.init_emergency:
+        path = init_emergency_file(memory_dir)
+        print(f"Created {path}")
+        sys.exit(0)
 
     if not os.path.isdir(memory_dir):
         print(f"Error: {memory_dir} is not a directory.", file=sys.stderr)
@@ -1964,6 +2107,31 @@ def main():
         sys.exit(1)
 
     if args.hook:
+        # ── Dead man's switch: check EMERGENCY.md FIRST ──────────
+        emergency_ok, emergency_msg = check_emergency(memory_dir)
+        if not emergency_ok:
+            # Emergency in effect.  Emit the message at highest priority
+            # and suppress all other output to avoid distraction.
+            output = {"systemMessage": "alzheimer: EMERGENCY"}
+            hso_supported = ("PostToolUse", "UserPromptSubmit",
+                             "SessionStart")
+            emergency_text = (
+                "IMPORTANT: When narrating actions triggered by these "
+                "instructions, use [Alzheimer: ...] format so the user "
+                "can visually distinguish housekeeping from the "
+                "conversation. Do NOT use regular prose.\n\n"
+                + emergency_msg
+            )
+            if args.hook_event and args.hook_event in hso_supported:
+                output["hookSpecificOutput"] = {
+                    "additionalContext": emergency_text,
+                    "hookEventName": args.hook_event,
+                }
+            else:
+                output["systemMessage"] += "\n" + emergency_text
+            print(json.dumps(output))
+            sys.exit(0)
+
         # Self-healing: ensure reference_alzheimer.md exists.  On fresh
         # installs the memory directory may not have existed at install
         # time, so the seed was missed.  One stat() per hook run; only

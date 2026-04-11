@@ -1302,6 +1302,9 @@ class TestHookCLIOutput(unittest.TestCase):
             ("FB X", "feedback_x.md", "do X"),
             ("Project Y", "project_y.md", "build Y"),
         ])
+        # Dead man's switch: EMERGENCY.md must exist with OK marker.
+        with open(os.path.join(d, "EMERGENCY.md"), "w") as f:
+            f.write("<!-- OK -->\nNo emergencies. All is well.\n")
 
     def _run_hook(self, d, extra_args=None):
         """Run rebalance.py --hook via subprocess, return parsed JSON."""
