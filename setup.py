@@ -277,6 +277,19 @@ def check_hooks(settings_path, rebalancer_path):
     ):
         print(f"  Reference seed: OK ({len(memory_dirs)} director{'y' if len(memory_dirs) == 1 else 'ies'})")
 
+    # Check EMERGENCY.md (dead man's switch) in all project memory directories.
+    emergency_missing = []
+    for d in memory_dirs:
+        emg = os.path.join(d, "EMERGENCY.md")
+        if not os.path.exists(emg):
+            emergency_missing.append(d)
+            ok = False
+    if emergency_missing:
+        for d in emergency_missing:
+            print(f"  EMERGENCY.md: MISSING in {d}")
+    elif memory_dirs:
+        print(f"  EMERGENCY.md: OK ({len(memory_dirs)} director{'y' if len(memory_dirs) == 1 else 'ies'})")
+
     return ok
 
 
@@ -537,6 +550,25 @@ def do_update(settings_path):
         [sys.executable, setup_py, "--install", "--settings", settings_path],
         cwd=alzheimer_dir
     )
+
+    # Fallback: seed EMERGENCY.md directly if the subprocess missed it.
+    # The subprocess runs the pulled code, but if that code predates
+    # EMERGENCY.md seeding, this catch ensures every memory dir gets one.
+    memory_dirs = glob.glob(os.path.expanduser(
+        "~/.claude/projects/*/memory"
+    ))
+    for d in memory_dirs:
+        emg = os.path.join(d, "EMERGENCY.md")
+        if not os.path.exists(emg):
+            try:
+                with open(emg, "w") as f:
+                    f.write("<!-- OK -->\n"
+                            "No emergencies in progress. "
+                            "All is well. Proceed as normal.\n")
+                print(f"  Seeded missing EMERGENCY.md: {d}")
+            except OSError:
+                print(f"  WARN: Could not create EMERGENCY.md in {d}")
+
     return result.returncode == 0
 
 
