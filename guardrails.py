@@ -179,11 +179,20 @@ def load_rules():
 def get_match_text(tool_name, tool_input):
     """Extract the text to match against from the tool input.
 
-    For Bash tools, match against the command string.
+    For Bash tools, match against the command string with single-quoted
+    strings neutralized to prevent false positives (e.g., matching 'gh'
+    inside: echo 'gh repo create ...' | clip.exe).
     For other tools, match against the JSON-serialized input.
     """
     if tool_name == "Bash":
-        return tool_input.get("command", "")
+        cmd = tool_input.get("command", "")
+        # Neutralize heredoc content: message bodies (git commit -m),
+        # not commands. Matches <<EOF...EOF, <<'EOF'...EOF, etc.
+        cmd = re.sub(r"<<-?['\"]?(\w+)['\"]?\n.*?\n\1\b", '""', cmd, flags=re.DOTALL)
+        # Neutralize single-quoted strings: their content is literal
+        # in bash (no expansion), so commands inside them are just text.
+        cmd = re.sub(r"'[^']*'", "''", cmd)
+        return cmd
     return json.dumps(tool_input)
 
 
@@ -191,12 +200,18 @@ def _is_self_exec(tool_name, tool_input):
     """Check if this is a guardrails.py --exec invocation (self-allowlist)."""
     if tool_name != "Bash":
         return False
-    command = tool_input.get("command", "")
-    # Match: python3 "/path/to/guardrails.py" --exec "..."
-    # The path may be quoted (Claude wraps paths in double quotes),
-    # so allow an optional closing quote after guardrails.py.
-    return bool(re.search(
-        r'python3?\s+.*guardrails\.py["\']?\s+--exec\b', command
+    command = tool_input.get("command", "").strip()
+    # Strip leading "cd <path> &&" — Claude often generates this pattern.
+    # cd is non-destructive, so stripping it is safe for matching purposes.
+    command = re.sub(r'^cd\s+\S+\s*&&\s*', '', command).strip()
+    # Match both direct and python-prefixed invocations:
+    #   python3 "/path/to/guardrails.py" --exec "..."
+    #   ~/.alzheimer/guardrails.py --exec "..."
+    #   /home/user/.alzheimer/guardrails.py --exec "..."
+    # Anchored to start of command to prevent matching embedded strings.
+    return bool(re.match(
+        r'["\']?(?:python3?\s+["\']?)?[^\s"\']*guardrails\.py["\']?\s+--exec\b',
+        command
     ))
 
 
@@ -381,10 +396,10 @@ def main_hook():
         # ignored, silently allowing the blocked command through.
         deny = json.dumps({
             "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": message,
-            },
-            "hookEventName": "PreToolUse",
+            }
         })
         print(deny)  # stdout — parsed by Claude Code at exit 0
         sys.exit(0)
