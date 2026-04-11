@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.18"
+VERSION = "0.7.19"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -59,7 +59,7 @@ BOOTSTRAP_TEXT = [
     BOOTSTRAP_START,
     "**BOOTSTRAP (read first):**",
     "Your FIRST action in a new session or after compaction: Glob",
-    "`_index/*.md` and Read every match in parallel. They are one-line",
+    "`**/_index/*.md` and Read every match in parallel. They are one-line",
     "summaries of every memory file in their category — complete",
     "orientation in ~5 files instead of reading hundreds. Skipping this",
     "means inheriting a fog of ignorance. Subagents: ignore this block.",
