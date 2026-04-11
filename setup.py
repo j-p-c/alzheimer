@@ -445,6 +445,14 @@ Alzheimer is Claudeware. When working with it, think Claudewarically:
     with open(memory_file, "w") as f:
         f.write(content)
 
+    # Ensure EMERGENCY.md (dead man's switch) exists.
+    emergency_file = os.path.join(memory_dir, "EMERGENCY.md")
+    if not os.path.exists(emergency_file):
+        with open(emergency_file, "w") as f:
+            f.write("<!-- OK -->\n"
+                    "No emergencies in progress. "
+                    "All is well. Proceed as normal.\n")
+
     # Add or update the MEMORY.md index entry.
     index_line = ("- [Alzheimer](reference_alzheimer.md) "
                   "— fixing Claude Code's memory bugs; "
