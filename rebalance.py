@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.22"
+VERSION = "0.7.23"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -409,6 +409,16 @@ def write_index(filepath, header, entries):
 
 # ── Emergency dead man's switch ──────────────────────────────────────
 
+def _find_memory_root(memory_dir):
+    """Walk up from memory_dir to find the root (directory containing MEMORY.md)."""
+    d = os.path.abspath(memory_dir)
+    while d != os.path.dirname(d):  # stop at filesystem root
+        if os.path.isfile(os.path.join(d, "MEMORY.md")):
+            return d
+        d = os.path.dirname(d)
+    return memory_dir  # fallback to original if no MEMORY.md found
+
+
 def check_emergency(memory_dir):
     """Check EMERGENCY.md status.  Returns (ok, message).
 
@@ -420,7 +430,8 @@ def check_emergency(memory_dir):
     with OK marker on the first line).  Missing or empty = infrastructure
     failure.  Content without OK marker = user emergency instructions.
     """
-    emergency_path = os.path.join(memory_dir, EMERGENCY_FILE)
+    root = _find_memory_root(memory_dir)
+    emergency_path = os.path.join(root, EMERGENCY_FILE)
 
     if not os.path.exists(emergency_path):
         return False, (
@@ -429,7 +440,7 @@ def check_emergency(memory_dir):
             "tripped. STOP all memory operations. Alert the user immediately: "
             "\"Your EMERGENCY.md file is missing. This is Alzheimer's safety "
             "mechanism. Please run: python3 <alzheimer>/rebalance.py "
-            f"{memory_dir} --init-emergency to restore it, or create "
+            f"{root} --init-emergency to restore it, or create "
             f"{emergency_path} manually with '<!-- OK -->' on the first line.\""
         )
 
