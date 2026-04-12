@@ -1396,8 +1396,14 @@ class TestHookCLIOutput(unittest.TestCase):
             obj = json.loads(lines[0])
             self.assertNotIn("hookSpecificOutput", obj)
 
-    def test_precompact_uses_hso_for_additional_context(self):
-        """PreCompact puts additional context in hookSpecificOutput."""
+    def test_precompact_folds_context_into_sysmsg(self):
+        """PreCompact folds additional context into systemMessage (not HSO).
+
+        Claude Code's schema rejects hookSpecificOutput for PreCompact,
+        so the code deliberately routes PreCompact content into
+        systemMessage instead.  PreCompact fires immediately before
+        compaction anyway, so HSO injection would be squashed.
+        """
         import json
         with TestDir() as d:
             self._make_tree(d)
@@ -1405,11 +1411,10 @@ class TestHookCLIOutput(unittest.TestCase):
             lines, _ = self._run_hook(d,
                                       ["--hook-event", "PreCompact"])
             obj = json.loads(lines[0])
-            # PreCompact supports hookSpecificOutput.additionalContext.
-            self.assertIn("hookSpecificOutput", obj)
-            hso = obj["hookSpecificOutput"]
-            self.assertEqual(hso["hookEventName"], "PreCompact")
-            self.assertIn("GLOSSARY NEEDED", hso["additionalContext"])
+            # PreCompact does NOT use hookSpecificOutput.
+            self.assertNotIn("hookSpecificOutput", obj)
+            # Glossary prompt folded into systemMessage.
+            self.assertIn("GLOSSARY", obj["systemMessage"])
 
     def test_unsupported_event_folds_context(self):
         """Unknown/missing hook event folds additional content into systemMessage."""
@@ -1594,17 +1599,19 @@ class TestUpdateCheck(unittest.TestCase):
         with TestDir() as d:
             cache = os.path.join(d, UPDATE_CACHE_FILE)
             _write_update_cache(cache, 3)
-            ts, behind, emitted = _read_update_cache(cache)
+            ts, behind, emitted, head = _read_update_cache(cache)
             self.assertEqual(behind, 3)
             self.assertGreater(ts, 0)
             self.assertEqual(emitted, 0)
+            self.assertEqual(head, "")
 
     def test_cache_missing(self):
         """Missing cache returns zero."""
-        ts, behind, emitted = _read_update_cache("/nonexistent/path")
+        ts, behind, emitted, head = _read_update_cache("/nonexistent/path")
         self.assertEqual(ts, 0)
         self.assertEqual(behind, 0)
         self.assertEqual(emitted, 0)
+        self.assertEqual(head, "")
 
     def test_cache_corrupt(self):
         """Corrupt cache returns zero."""
@@ -1612,10 +1619,11 @@ class TestUpdateCheck(unittest.TestCase):
             cache = os.path.join(d, UPDATE_CACHE_FILE)
             with open(cache, "w") as f:
                 f.write("not json")
-            ts, behind, emitted = _read_update_cache(cache)
+            ts, behind, emitted, head = _read_update_cache(cache)
             self.assertEqual(ts, 0)
             self.assertEqual(behind, 0)
             self.assertEqual(emitted, 0)
+            self.assertEqual(head, "")
 
     def test_fresh_cache_skips_fetch(self):
         """If cache is fresh, no fetch happens (returns cached result)."""

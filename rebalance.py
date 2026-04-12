@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.23"
+VERSION = "0.7.24"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
