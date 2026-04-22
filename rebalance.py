@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.24"
+VERSION = "0.7.25"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -985,6 +985,8 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
             pointer = build_category_pointer(
                 memory_dir, category, index_path, group
             )
+            # Dedupe: remove any existing pointer with the same path.
+            new_entries = [e for e in new_entries if e["path"] != index_path]
             new_entries.append({
                 "title": CATEGORY_LABELS[category],
                 "path":  index_path,
@@ -1008,6 +1010,8 @@ def rebalance(memory_dir, max_lines=DEFAULT_MAX_LINES,
             pointer = build_category_pointer(
                 memory_dir, category, index_path, group
             )
+            # Dedupe: remove any existing pointer with the same path.
+            new_entries = [e for e in new_entries if e["path"] != index_path]
             new_entries.append({
                 "title": category.title(),
                 "path":  index_path,
@@ -1572,6 +1576,8 @@ def rebalance_index(memory_dir, rel_path, max_lines, max_bytes,
 
             pointer = (f"- [{group_name.title()} ({count})]"
                        f"({child_rel}) — {summary}")
+            # Dedupe: remove any existing pointer with the same path.
+            new_entries = [e for e in new_entries if e["path"] != child_rel]
             new_entries.append({
                 "title": group_name.title(),
                 "path":  child_rel,
