@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.25"
+VERSION = "0.7.26"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -1436,10 +1436,15 @@ def group_entries_by_keyword(entries):
 
 def build_sub_index(memory_dir, parent_rel_path, group_name, entries,
                     max_lines):
-    """Create a sub-index under an existing category index.
+    """Create or update a sub-index under an existing category index.
 
     For _index/feedback.md, creates _index/feedback/topic.md.
-    Returns the relative path (from memory_dir) to the sub-index.
+    If the sub-index file already exists, merges its current entries
+    with the new ones (dedupe by path). Without this merge, a keyword
+    split that produces the same filename on successive runs — but with
+    different entries — would silently orphan the previous entries,
+    forcing check_drift to auto-index them back into MEMORY.md and
+    causing unbounded growth across rebalances.
     """
     parent_dir = os.path.dirname(parent_rel_path)
     parent_stem = os.path.splitext(os.path.basename(parent_rel_path))[0]
@@ -1468,6 +1473,17 @@ def build_sub_index(memory_dir, parent_rel_path, group_name, entries,
             "raw":   f"- [{entry['title']}]({adj_path}) — {entry['desc']}",
         })
 
+    # Merge with existing entries (dedupe by path).
+    existing_entries = []
+    if os.path.exists(sub_index_abs):
+        _, existing_entries = parse_index(sub_index_abs)
+    existing_paths = {e["path"] for e in existing_entries}
+    merged = list(existing_entries)
+    for e in adjusted:
+        if e["path"] not in existing_paths:
+            merged.append(e)
+            existing_paths.add(e["path"])
+
     # Relative path from sub-index back to parent.
     parent_from_sub = "../" + os.path.basename(parent_rel_path)
 
@@ -1476,14 +1492,14 @@ def build_sub_index(memory_dir, parent_rel_path, group_name, entries,
         "type: index",
         f"parent: {parent_from_sub}",
         f"topic: {group_name}",
-        f"children: {len(adjusted)}",
+        f"children: {len(merged)}",
         f"max_lines: {max_lines}",
         "---",
         "",
         f"# {group_name.title()}",
         "",
     ]
-    for entry in adjusted:
+    for entry in merged:
         lines.append(entry["raw"])
     lines.append("")
 
