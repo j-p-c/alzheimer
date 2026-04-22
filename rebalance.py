@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.26"
+VERSION = "0.7.27"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -1520,6 +1520,71 @@ def resolve_child_path(parent_rel_path, child_entry_path):
     return os.path.normpath(os.path.join(parent_dir, child_entry_path))
 
 
+def _gc_orphan_subindices(memory_dir, parent_rel_path, entries, dry_run):
+    """Reconcile the parent index with the on-disk companion directory.
+
+    For parent ``_index/feedback.md`` the companion directory is
+    ``_index/feedback/``.  Sub-index files in that directory that are
+    not referenced by any entry in ``entries`` are either:
+
+    - re-linked (non-empty file gets a new sub-pointer appended to
+      ``entries``), or
+    - deleted (empty file).
+
+    Without this reconciliation, a keyword split whose group-name set
+    shifts between runs leaves the previous sub-index file dangling —
+    its leaves become unreachable via the tree walk, get picked up as
+    orphans, and bounce back into MEMORY.md on the next check_drift.
+
+    Mutates ``entries`` in place. Returns True if anything changed.
+    """
+    parent_stem = os.path.splitext(os.path.basename(parent_rel_path))[0]
+    parent_dir = os.path.dirname(parent_rel_path)
+    companion_dir_rel = os.path.join(parent_dir, parent_stem)
+    companion_dir_abs = os.path.join(memory_dir, companion_dir_rel)
+
+    if not os.path.isdir(companion_dir_abs):
+        return False
+
+    referenced = {
+        os.path.basename(e["path"])
+        for e in entries
+        if not e["path"].startswith("../")
+    }
+
+    modified = False
+    for fname in sorted(os.listdir(companion_dir_abs)):
+        if not fname.endswith(".md") or fname in referenced:
+            continue
+
+        stale_abs = os.path.join(companion_dir_abs, fname)
+        try:
+            _, stale_entries = parse_index(stale_abs)
+        except Exception:
+            continue
+
+        count = len(stale_entries)
+        if count == 0:
+            if not dry_run:
+                os.remove(stale_abs)
+            modified = True
+            continue
+
+        stale_rel = f"{parent_stem}/{fname}"
+        topic = os.path.splitext(fname)[0]
+        summary = summarize_entries(stale_entries, max_len=100)
+        pointer = f"- [{topic.title()} ({count})]({stale_rel}) — {summary}"
+        entries.append({
+            "title": topic.title(),
+            "path":  stale_rel,
+            "desc":  summary,
+            "raw":   pointer,
+        })
+        modified = True
+
+    return modified
+
+
 def rebalance_index(memory_dir, rel_path, max_lines, max_bytes,
                     dry_run, depth=0):
     """Rebalance a child index file (recursive at arbitrary depth).
@@ -1546,10 +1611,34 @@ def rebalance_index(memory_dir, rel_path, max_lines, max_bytes,
         return actions, warnings
 
     header, entries = parse_index(full_path)
+
+    # Reconcile with the companion directory: re-link or delete sub-index
+    # files that the parent has lost track of.
+    if _gc_orphan_subindices(memory_dir, rel_path, entries, dry_run):
+        if not dry_run:
+            write_index(full_path, header, entries)
+        actions.append(f"{indent}{rel_path}: reclaimed orphan sub-indexes.")
+
     total_lines = len(header) + len(entries) + 1
 
     if not exceeds_limits(full_path, header, entries, max_lines, max_bytes):
-        return [f"{indent}{rel_path}: {total_lines} lines — OK."], warnings
+        # Under-limit files still need their children walked so that
+        # GC reaches every level of the tree, not just the subtree
+        # above an over-limit node.
+        for entry in entries:
+            if entry["path"].startswith("../"):
+                continue
+            child_abs_rel = resolve_child_path(rel_path, entry["path"])
+            child_full = os.path.join(memory_dir, child_abs_rel)
+            if os.path.exists(child_full):
+                sub_actions, sub_warns = rebalance_index(
+                    memory_dir, child_abs_rel, max_lines,
+                    max_bytes, dry_run, depth + 1
+                )
+                actions.extend(sub_actions)
+                warnings.extend(sub_warns)
+        actions.append(f"{indent}{rel_path}: {total_lines} lines — OK.")
+        return actions, warnings
 
     # Separate leaf entries (point to ../) from sub-index pointers.
     leaves = [e for e in entries if e["path"].startswith("../")]
