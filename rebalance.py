@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.27"
+VERSION = "0.7.28"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -2239,7 +2239,7 @@ def main():
                              "SessionStart")
             emergency_text = (
                 "IMPORTANT: When narrating actions triggered by these "
-                "instructions, use [Alzheimer: ...] format so the user "
+                "instructions, use (parenthetical) format so the user "
                 "can visually distinguish housekeeping from the "
                 "conversation. Do NOT use regular prose.\n\n"
                 + emergency_msg
@@ -2323,7 +2323,7 @@ def main():
         if additional:
             additional.insert(0,
                 "IMPORTANT: When narrating actions triggered by these "
-                "instructions, use [Alzheimer: ...] format so the user "
+                "instructions, use (parenthetical) format so the user "
                 "can visually distinguish housekeeping from the "
                 "conversation. Do NOT use regular prose."
             )
