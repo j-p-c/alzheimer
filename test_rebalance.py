@@ -1530,9 +1530,11 @@ class TestCheckDrift(unittest.TestCase):
             make_index(d, [("Big", "big.md", "desc")])
             actions, warnings = check_drift(d)
             self.assertEqual(len(warnings), 1)
-            self.assertIn("DRIFT", warnings[0])
+            self.assertIn("INFO", warnings[0])
             self.assertIn("big.md", warnings[0])
-            self.assertIn("oversized", warnings[0])
+            self.assertIn("over the soft", warnings[0])
+            # Per John 2026-05-05, the warning must NOT prescribe pruning.
+            self.assertIn("DO NOT prune", warnings[0])
 
     def test_leaf_under_limit_no_warning(self):
         """Leaf file at exactly LEAF_MAX_LINES does not warn."""

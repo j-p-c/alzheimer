@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.28"
+VERSION = "0.7.29"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -667,7 +667,10 @@ def check_for_updates(alzheimer_dir=None, force=False):
 
 # Leaf files over this many lines trigger a warning.  Individual memory
 # files shouldn't be enormous — they become hard to maintain and may
-# indicate content that should be split or trimmed.
+# indicate content that may warrant splitting into distinct pins.
+# Per John 2026-05-05: do NOT prune memory content. If a file is oversized
+# because it's actually two distinct concerns glued together, split into
+# related-but-distinct pins; otherwise, leave at the larger size.
 LEAF_MAX_LINES = 150
 
 
@@ -762,13 +765,14 @@ def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
         more = (f" (+{len(oversized) - 5} more)"
                 if len(oversized) > 5 else "")
         warnings.append(
-            f"DRIFT: {len(oversized)} oversized memory file(s): "
-            f"{details}{more}. "
-            f"These files waste context window space when loaded, "
-            f"causing more frequent compactions and potential context "
-            f"loss. Read each file, archive completed/historical "
-            f"sections into separate files with frontmatter, and keep "
-            f"only active/current content in the original."
+            f"INFO: {len(oversized)} memory file(s) over the soft "
+            f"{LEAF_MAX_LINES}-line cap: {details}{more}. "
+            f"Per John 2026-05-05, DO NOT prune content. Consider "
+            f"whether the file is actually two distinct concerns that "
+            f"should be split into related-but-distinct pins (each "
+            f"with its own frontmatter); if it's coherent as a single "
+            f"pin, leave it at the larger size — context-window cost "
+            f"is acceptable; data loss is not."
         )
 
     return actions, warnings
