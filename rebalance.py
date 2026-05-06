@@ -24,7 +24,7 @@ import subprocess
 import sys
 import traceback
 
-VERSION = "0.7.30"
+VERSION = "0.7.31"
 REPO_OWNER = "j-p-c"
 REPO_NAME = "alzheimer"
 
@@ -665,17 +665,15 @@ def check_for_updates(alzheimer_dir=None, force=False):
 
 # ── Drift detection ───────────────────────────────────────────────────
 
-# Leaf files over this many lines trigger a warning.  Individual memory
-# files shouldn't be enormous — they become hard to maintain and may
-# indicate content that may warrant splitting into distinct pins.
-# Per John 2026-05-05: do NOT prune memory content. If a file is oversized
-# because it's actually two distinct concerns glued together, split into
-# related-but-distinct pins; otherwise, leave at the larger size.
-LEAF_MAX_LINES = 150
+# Per John 2026-05-06: only MEMORY.md has a hard cap on read (200 lines,
+# Claude Code-enforced). Other memory files are read on demand; their
+# size is the author's call. The rebalancer no longer flags leaf files
+# for size. Index files (_index/*.md) still drive split logic when they
+# exceed their per-file `max_lines` (load-bearing for tree health).
 
 
 def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
-    """Check for orphaned files and oversized leaf files.
+    """Check for orphaned files.
 
     Runs after every rebalance (including no-op runs) to catch problems
     that accumulate between --verify runs.
@@ -742,38 +740,6 @@ def check_drift(memory_dir, max_lines=DEFAULT_MAX_LINES, dry_run=False):
                 f"one-line index entry to MEMORY.md: "
                 f"- [Title](filename.md) — short description"
             )
-
-    # Oversized leaf file check.
-    skip = {"MEMORY.md", GLOSSARY_FILE, GUARDRAILS_FILE, EMERGENCY_FILE}
-    oversized = []
-    for name in sorted(os.listdir(memory_dir)):
-        if name in skip or name.startswith("_") or not name.endswith(".md"):
-            continue
-        filepath = os.path.join(memory_dir, name)
-        try:
-            with open(filepath) as fh:
-                line_count = sum(1 for _ in fh)
-        except OSError:
-            continue
-        if line_count > LEAF_MAX_LINES:
-            oversized.append((name, line_count))
-
-    if oversized:
-        details = ", ".join(
-            f"{name} ({lines} lines)" for name, lines in oversized[:5]
-        )
-        more = (f" (+{len(oversized) - 5} more)"
-                if len(oversized) > 5 else "")
-        warnings.append(
-            f"INFO: {len(oversized)} memory file(s) over the soft "
-            f"{LEAF_MAX_LINES}-line cap: {details}{more}. "
-            f"Per John 2026-05-05, DO NOT prune content. Consider "
-            f"whether the file is actually two distinct concerns that "
-            f"should be split into related-but-distinct pins (each "
-            f"with its own frontmatter); if it's coherent as a single "
-            f"pin, leave it at the larger size — context-window cost "
-            f"is acceptable; data loss is not."
-        )
 
     return actions, warnings
 

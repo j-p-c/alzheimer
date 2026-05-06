@@ -19,7 +19,6 @@ from rebalance import (
     GUARDRAILS_FILE,
     HARD_MAX_LINES,
     HARD_MAX_BYTES,
-    LEAF_MAX_LINES,
     MIN_GROUP_SIZE,
     MAX_DEPTH,
     UPDATE_CACHE_FILE,
@@ -1519,31 +1518,15 @@ class TestCheckDrift(unittest.TestCase):
             paths = [e["path"] for e in entries]
             self.assertNotIn("orphan.md", paths)
 
-    def test_oversized_leaf_detected(self):
-        """Leaf file over LEAF_MAX_LINES triggers warning."""
+    def test_oversized_leaf_does_not_warn(self):
+        """Leaf files of any size produce no warning (per John 2026-05-06)."""
         with TestDir() as d:
             big_file = os.path.join(d, "big.md")
             with open(big_file, "w") as f:
                 f.write("---\nname: Big\ntype: user\n---\n")
-                for i in range(LEAF_MAX_LINES + 10):
+                for i in range(500):
                     f.write(f"Line {i}\n")
             make_index(d, [("Big", "big.md", "desc")])
-            actions, warnings = check_drift(d)
-            self.assertEqual(len(warnings), 1)
-            self.assertIn("INFO", warnings[0])
-            self.assertIn("big.md", warnings[0])
-            self.assertIn("over the soft", warnings[0])
-            # Per John 2026-05-05, the warning must NOT prescribe pruning.
-            self.assertIn("DO NOT prune", warnings[0])
-
-    def test_leaf_under_limit_no_warning(self):
-        """Leaf file at exactly LEAF_MAX_LINES does not warn."""
-        with TestDir() as d:
-            ok_file = os.path.join(d, "ok.md")
-            with open(ok_file, "w") as f:
-                for i in range(LEAF_MAX_LINES):
-                    f.write(f"Line {i}\n")
-            make_index(d, [("OK", "ok.md", "desc")])
             actions, warnings = check_drift(d)
             self.assertEqual(warnings, [])
 
@@ -1560,7 +1543,7 @@ class TestCheckDrift(unittest.TestCase):
             )
 
     def test_glossary_not_flagged(self):
-        """Glossary file should not be flagged as orphan or oversized."""
+        """Glossary file should not be flagged as orphan."""
         with TestDir() as d:
             make_leaf(d, "a.md", "user", "A")
             make_index(d, [("A", "a.md", "desc")])
